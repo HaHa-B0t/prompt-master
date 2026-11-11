@@ -384,7 +384,7 @@ const QUICK =
 
 // Short replies made only of these words are quick too ("yes please do it").
 const QUICK_WORDS = new Set(
-  'y yes yep yeah yup ok okay sure please pls go ahead do it thanks thank you so much sounds looks good great perfect cool nice awesome continue proceed that works fine all right alright opo oo sige salamat'.split(
+  'y yes yep yeah yup ok okay sure please pls go ahead do it thanks thank you so much sounds looks good great perfect cool nice awesome continue proceed that works fine all right alright'.split(
     ' ',
   ),
 )
