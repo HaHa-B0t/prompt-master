@@ -7,6 +7,8 @@ Polishes your rough prompt before Claude reads it.
 3. If something that changes the result is missing, it asks you (up to 3 short questions, in Claude's own question dialog).
 4. It rewrites the prompt with a clear frame (Task, Why, Context, Requirements, Steps, Output, Done when; only the parts that help) and sends the rewrite.
 
+Your message bubble keeps your own words; a **▸ ✨ Polished prompt** row right under it opens to the version Claude received.
+
 Your facts, names, numbers, file paths and part numbers are kept exactly. Nothing is invented. Long pastes (logs, tables, code) go through untouched.
 
 ## Install
@@ -39,6 +41,10 @@ Answer `y` to add the marketplace, then pick a scope (user is first).
 - Prompts typed while Claude is still working.
 - Scheduled and other unattended runs (nobody is there to answer questions).
 - Any prompt you start with `::` (sent as typed, minus the `::`).
+
+## When it sends your prompt as typed
+
+A short notice tells you why: it was already clear, or Claude was still working, or a question was closed. Quick replies like "yes" go through quietly.
 
 ## If you close a question
 

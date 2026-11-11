@@ -43,6 +43,7 @@ type World = {
   toasts: string[]
   statuses: (string | undefined)[]
   commands: string[]
+  placed: string[]
   store: Map<string, unknown>
   /** Resolves when the helper model is first called. */
   modelReached: Promise<void>
@@ -70,6 +71,7 @@ function worldOf(on: On, script: Script = {}): World {
     toasts: [],
     statuses: [],
     commands: [],
+    placed: [],
     store: new Map(Object.entries(script.stored ?? {})),
     modelReached: modelGate.promise,
     askReached: askGate.promise,
@@ -104,6 +106,15 @@ function worldOf(on: On, script: Script = {}): World {
   })
 
   on('session.messages', () => ({ value: script.history ?? [] }))
+
+  let tick = 1_794_000_000_000
+  on('clock.now', () => ({ value: (tick += 1000) }))
+
+  on('ui.place', ($, e) => {
+    world.placed.push(e.id)
+
+    return { value: { isPlaced: true as const, requestId: `row-${e.id}` } }
+  })
 
   // What the engine itself draws in the band above the prompt.
   on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
@@ -464,7 +475,10 @@ describe('what goes through untouched', () => {
     expect(result.text).toBe(ROUGH)
     expect(world.submitted[0]?.text).toBe(ROUGH)
     expect(world.submitted[0]?.context).toBeUndefined()
-    expect(world.toasts).toEqual([])
+    expect(world.toasts, 'a pass says so, so it never looks like a failure').toEqual([
+      'Prompt Master: your prompt was already clear, so it went as typed.',
+    ])
+    expect(world.placed, 'nothing was polished, so no row').toEqual([])
     expect(world.statuses.at(-1)).toBeUndefined()
   })
 
@@ -528,6 +542,64 @@ describe('what goes through untouched', () => {
 
     expect(world.calls).toEqual([])
     expect(world.submitted.map(s => s.text)).toEqual([ROUGH, ROUGH, '/review the hardware sheet'])
+    expect(world.toasts, 'only the mid-turn prompt is told about').toEqual([
+      'Prompt Master skipped this one: Claude was still working, so it went as typed.',
+    ])
+  })
+
+  test('a quick reply typed mid-turn goes as typed without a notice', async ($, on) => {
+    const world = worldOf(on)
+    await $.session.start(SESSION)
+
+    await $.prompt.submit({ ...typed('ok'), turnId: 'turn-1' })
+
+    expect(world.toasts).toEqual([])
+  })
+})
+
+// ------------------------------------------------------------------ the polished row
+
+const placedProps = (id: string) => ({ plugin: NAME, component: 'Placed', props: { id, plugin: NAME } }) as const
+
+describe('seeing both versions', () => {
+  test('a polished prompt places a collapsed row under the message that opens to the polished text', async ($, on) => {
+    const world = worldOf(on, { replies: [plan({ action: 'rewrite', reason: 'r' }, REWRITE)] })
+    await $.session.start(SESSION)
+
+    await $.prompt.submit(typed(ROUGH))
+
+    expect(world.placed).toHaveLength(1)
+    const id = world.placed[0] ?? ''
+    expect(id).toMatch(/^polished-\d+$/)
+
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount({ ...placedProps(id), surface })
+      const toggle = await ui.find({ key: `toggle-${id}` })
+      expect(toggle?.text, surface).toBe('▸ ✨ Polished prompt')
+      expect(await ui.find({ text: /hardware workbook/ }), `${surface}: collapsed at first`).toBeUndefined()
+
+      await ui.press({ key: `toggle-${id}` })
+      expect((await ui.find({ key: `toggle-${id}` }))?.text, surface).toBe('▾ ✨ Polished prompt')
+      expect(await ui.find({ text: /hardware workbook/ }), `${surface}: open shows the polished text`).toBeDefined()
+
+      await ui.press({ key: `toggle-${id}` })
+      await ui.unmount()
+    }
+  })
+
+  test("another plugin's placed row is left alone", async ($, on) => {
+    worldOf(on)
+    on('ui.render', { component: 'Placed' }, ($, e) => {
+      const { Text } = $.ui.resolve(e)
+
+      return <Text>theirs</Text>
+    })
+    await $.session.start(SESSION)
+
+    const ui = await $.ui.mount({ plugin: NAME, component: 'Placed', props: { id: 'polished-1', plugin: 'someone-else' }, surface: 'desktop' })
+
+    expect(await ui.find({ text: 'theirs' })).toBeDefined()
+    await ui.unmount()
   })
 })
 

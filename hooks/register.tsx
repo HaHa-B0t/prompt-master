@@ -2,10 +2,10 @@
 // missing, then rewrites it with a clear prompt framework. One button above
 // the prompt box (and /prompt-master) turns it on or off.
 
-import { atom, read, update } from 'claude-code'
+import { atom, memberOf, read, update } from 'claude-code'
 import type { EngineInterface as Engine, PluginOptions, Register, SessionMessage } from 'claude-code'
 
-import type { Phase } from '../types'
+import type { Phase, Polished } from '../types'
 import {
   FIND_IT,
   SKIP_IT,
@@ -25,6 +25,8 @@ import type { Answer, Request, Situation } from './prompts'
 
 const isOn = atom({ plugin: 'prompt-master', key: 'isOn' } as const, true)
 const phase = atom({ plugin: 'prompt-master', key: 'phase' } as const, 'idle' as Phase)
+// One per polished prompt, keyed by the id of the row placed under it.
+const polished = atom({ plugin: 'prompt-master', key: 'polished' } as const, { text: '', isOpen: false } as Polished)
 
 // On/off is kept across sessions here.
 const STORE_KEY = 'isOn'
@@ -221,6 +223,18 @@ function originalNote(raw: string, answers: readonly Answer[]): string {
   return `The prompt above was polished from the person's own words by their Prompt Master tool. Follow it; check any stated assumption against what you find. Use the original below only to confirm exact names, numbers and paths. Do not mention Prompt Master or this note.${qa}\n<original_prompt>\n${clip(raw, ORIGINAL_NOTE_CHARS)}\n</original_prompt>`
 }
 
+// Places a collapsed "Polished prompt" row at the end of the chat, which is
+// right under the message that just went in.
+async function showPolished($: Engine, text: string) {
+  try {
+    const id = `polished-${Math.round(await $.clock.now())}`
+    await update($, memberOf(polished, { requestId: id }), () => ({ text, isOpen: false }))
+    await $.ui.place({ id })
+  } catch {
+    // Display only: the prompt already went in.
+  }
+}
+
 // ---------------------------------------------------------------- hooks
 
 export const register: Register = (on, options) => {
@@ -263,7 +277,7 @@ export const register: Register = (on, options) => {
 
   on('prompt.submit', async ($, e, next) => {
     if (!(await read($, isOn))) return next(e)
-    if (e.command || e.isMeta || e.turnId) return next(e)
+    if (e.command || e.isMeta) return next(e)
     if (!PERSON_ORIGINS.has(e.origin.kind)) return next(e)
 
     const lead = e.text.trimStart()
@@ -272,6 +286,10 @@ export const register: Register = (on, options) => {
       return text ? next({ ...e, text }) : next(e)
     }
     if (isMachineFramed(e.text) || isQuickReply(e.text)) return next(e)
+    if (e.turnId) {
+      $.ui.toast('Prompt Master skipped this one: Claude was still working, so it went as typed.')
+      return next(e)
+    }
     if (isBusy) {
       $.ui.toast('Prompt Master is still on your last prompt, so this one went as typed.')
       return next(e)
@@ -311,7 +329,10 @@ export const register: Register = (on, options) => {
       if (isCutOff(reply)) return asTyped('ran out of room on a long prompt')
 
       const plan = parsePlan(reply, settings.maxQuestions)
-      if (plan?.action === 'pass') return next(e)
+      if (plan?.action === 'pass') {
+        $.ui.toast('Prompt Master: your prompt was already clear, so it went as typed.')
+        return next(e)
+      }
 
       let rewrite: string | undefined
       const answers: Answer[] = []
@@ -400,7 +421,12 @@ export const register: Register = (on, options) => {
           : 'Prompt Master polished your prompt.',
       )
 
-      return next({ ...e, text: final, context: [...(e.context ?? []), originalNote(raw, answers)] })
+      const entered = await next({ ...e, text: final, context: [...(e.context ?? []), originalNote(raw, answers)] })
+      // The desktop app's bubble keeps the person's own words, so show the
+      // polished version in a row right under it. Display only: never sent.
+      if (entered.drop === undefined) await showPolished($, final)
+
+      return entered
     } finally {
       next.signal.removeEventListener('abort', onAbort)
       if (stop === mine) stop = undefined
@@ -445,6 +471,37 @@ export const register: Register = (on, options) => {
       </Box>
     ) : (
       row
+    )
+  })
+
+  // The row under a polished message: click to show or hide the polished text.
+  on('ui.render', { component: 'Placed' }, async ($, e, next) => {
+    if (e.props.plugin !== $.plugin.name || !e.props.id.startsWith('polished-')) return next(e)
+    const member = memberOf(polished, { requestId: e.props.id })
+    const shown = await read($, member)
+    if (!shown.text) return next(e)
+
+    const els = $.ui.resolve(e)
+    const { Box, Button, Text } = els
+
+    return (
+      <Box flexDirection="column">
+        <Button
+          key={`toggle-${e.props.id}`}
+          plain
+          dimColor
+          onPress={() => void update($, member, v => ({ ...v, isOpen: !v.isOpen }))}
+        >
+          {`${shown.isOpen ? '▾' : '▸'} ✨ Polished prompt`}
+        </Button>
+        {shown.isOpen ? (
+          'Markdown' in els ? (
+            <els.Markdown key={`text-${e.props.id}`} text={shown.text} />
+          ) : (
+            <Text>{shown.text}</Text>
+          )
+        ) : null}
+      </Box>
     )
   })
 
