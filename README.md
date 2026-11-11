@@ -50,6 +50,6 @@ In the plugin's settings:
 
 - **Prompt Master model**: `sonnet` (default), `opus` or `haiku`.
 - **Most questions per prompt**: 0 to 4 (default 3; 0 = never ask, just rewrite).
-- **Review before sending**: show the polished prompt first, then choose Send it, Send my original, or type what to change.
+- **Review before sending**: show the polished prompt first, then choose Send it, Try another version (a fresh rewrite), Send my original, or type what to change. The dialog's own Skip button also sends your original.
 
 Each polished prompt costs one or two extra model calls.

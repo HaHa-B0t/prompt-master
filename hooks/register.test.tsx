@@ -797,7 +797,7 @@ describe('settings', () => {
 
     expect(world.asked[0]?.header).toBe('Review')
     expect(world.asked[0]?.question).toContain(REWRITE)
-    expect(world.asked[0]?.options).toEqual(['Send it', 'Send my original'])
+    expect(world.asked[0]?.options).toEqual(['Send it', 'Try another version', 'Send my original'])
     expect(result.text).toBe(REWRITE)
   })
 
@@ -824,6 +824,22 @@ describe('settings', () => {
     expect(world.calls[1]?.prompt).toContain('<change_request>\nMake it shorter\n</change_request>')
     expect(world.asked[1]?.question).toContain(SHORTER)
     expect(result.text).toBe(SHORTER)
+  })
+
+  test('review: "Try another version" shows a fresh rewrite, and the last round no longer offers it', { options: { review: true } }, async ($, on) => {
+    const world = worldOf(on, {
+      replies: [plan({ action: 'rewrite', reason: 'r' }, REWRITE), written('v2'), written('v3')],
+      answers: ['Try another version', 'Try another version', 'Send it'],
+    })
+    await $.session.start(SESSION)
+
+    const result = await $.prompt.submit(typed(ROUGH))
+
+    expect(world.asked[0]?.options).toEqual(['Send it', 'Try another version', 'Send my original'])
+    expect(world.calls[1]?.prompt).toContain('<change_request>\nWrite a noticeably different version')
+    expect(world.asked[1]?.question).toContain('v2')
+    expect(world.asked[2]?.options, 'the last round would send a new version unseen').toEqual(['Send it', 'Send my original'])
+    expect(result.text).toBe('v3')
   })
 
   test('review: a change typed on the last round is applied and sent, not dropped', { options: { review: true } }, async ($, on) => {

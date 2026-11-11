@@ -49,6 +49,13 @@ const NEWEST_REPLY_CHARS = 2000
 const HISTORY_CHARS = 6000
 const MODEL_TIMEOUT_MS = 90_000
 const MAX_REVISIONS = 2
+
+// The review dialog's choices. Its own "Skip" button can't be renamed or hidden.
+const SEND_IT = 'Send it'
+const ANOTHER_VERSION = 'Try another version'
+const SEND_ORIGINAL = 'Send my original'
+const FRESH_VERSION =
+  'Write a noticeably different version: other wording and structure, the same facts, intent and scope.'
 const ORIGINAL_NOTE_CHARS = 20_000
 
 type Settings = { model: string; maxQuestions: number; review: boolean }
@@ -354,17 +361,20 @@ export const register: Register = (on, options) => {
               `Here's your polished prompt:\n\n${restorePastes(rewrite, pastes.blocks)}\n\n${
                 isLast ? 'Send it? (type one last change and it will be applied and sent)' : 'Send it?'
               }`,
-              { options: ['Send it', 'Send my original'], header: 'Review' },
+              // The last round has no fresh version to offer: it would be sent unseen.
+              { options: isLast ? [SEND_IT, SEND_ORIGINAL] : [SEND_IT, ANOTHER_VERSION, SEND_ORIGINAL], header: 'Review' },
             )
           } catch {
             return asTyped('review was closed')
           }
           if (signal.aborted) return stopped()
-          if (choice === 'Send it') break
-          if (choice === 'Send my original' || !choice.trim()) return next(e)
+          if (choice === SEND_IT) break
+          // The dialog's own Skip leaves the answer empty: send the original.
+          if (choice === SEND_ORIGINAL || !choice.trim()) return next(e)
 
+          const change = choice === ANOTHER_VERSION ? FRESH_VERSION : choice.trim()
           await setPhase($, 'writing')
-          const revised = await complete($, settings.model, reviseRequest(situation, rewrite, choice.trim()), signal)
+          const revised = await complete($, settings.model, reviseRequest(situation, rewrite, change), signal)
           if (signal.aborted) return stopped()
           const text = revised === undefined ? undefined : extractPrompt(revised)
           if (text) rewrite = text
