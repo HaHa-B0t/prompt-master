@@ -43,7 +43,10 @@ type World = {
   toasts: string[]
   statuses: (string | undefined)[]
   commands: string[]
-  placed: string[]
+  copied: { text: string; surface: string | undefined }[]
+  // What the prompt box holds, and each fill asked of it
+  draft: string
+  fills: { text: string; mode: string | undefined }[]
   store: Map<string, unknown>
   /** Resolves when the helper model is first called. */
   modelReached: Promise<void>
@@ -71,7 +74,9 @@ function worldOf(on: On, script: Script = {}): World {
     toasts: [],
     statuses: [],
     commands: [],
-    placed: [],
+    copied: [],
+    draft: '',
+    fills: [],
     store: new Map(Object.entries(script.stored ?? {})),
     modelReached: modelGate.promise,
     askReached: askGate.promise,
@@ -110,10 +115,21 @@ function worldOf(on: On, script: Script = {}): World {
   let tick = 1_794_000_000_000
   on('clock.now', () => ({ value: (tick += 1000) }))
 
-  on('ui.place', ($, e) => {
-    world.placed.push(e.id)
+  // As documented: only the terminal takes a mod's copy; a remote surface has no path yet.
+  on('ui.copy', ($, e) => {
+    if (e.surface !== 'terminal') return { value: { isCopied: false as const, reason: 'no-surface' as const } }
+    world.copied.push({ text: e.text, surface: e.surface })
 
-    return { value: { isPlaced: true as const, requestId: `row-${e.id}` } }
+    return { value: { isCopied: true as const } }
+  })
+
+  on('prompt.read', () => ({ value: { text: world.draft, cursor: world.draft.length } }))
+
+  on('prompt.fill', ($, e) => {
+    world.fills.push({ text: e.text, mode: e.mode })
+    world.draft = e.mode === 'append' ? world.draft + e.text : e.text
+
+    return { isFilled: true, text: world.draft, cursor: world.draft.length }
   })
 
   // What the engine itself draws in the band above the prompt.
@@ -478,7 +494,6 @@ describe('what goes through untouched', () => {
     expect(world.toasts, 'a pass says so, so it never looks like a failure').toEqual([
       'Prompt Master: your prompt was already clear, so it went as typed.',
     ])
-    expect(world.placed, 'nothing was polished, so no row').toEqual([])
     expect(world.statuses.at(-1)).toBeUndefined()
   })
 
@@ -557,48 +572,72 @@ describe('what goes through untouched', () => {
   })
 })
 
-// ------------------------------------------------------------------ the polished row
+// ------------------------------------------------------------------ the 💬 in the band
 
-const placedProps = (id: string) => ({ plugin: NAME, component: 'Placed', props: { id, plugin: NAME } }) as const
-
-describe('seeing both versions', () => {
-  test('a polished prompt places a collapsed row under the message that opens to the polished text', async ($, on) => {
-    const world = worldOf(on, { replies: [plan({ action: 'rewrite', reason: 'r' }, REWRITE)] })
+describe('seeing the polished prompt', () => {
+  test('after a polished prompt the band shows 💬: Copy it on the terminal, Put in prompt box in the apps', async ($, on) => {
+    const world = worldOf(on, { replies: [plan({ action: 'rewrite', reason: 'r' }, REWRITE)], answers: ['Copy it', 'Put in prompt box'] })
     await $.session.start(SESSION)
 
     await $.prompt.submit(typed(ROUGH))
+    expect(world.submitted[0]?.text, 'Claude (and the phone) get the polished prompt').toBe(REWRITE)
 
-    expect(world.placed).toHaveLength(1)
-    const id = world.placed[0] ?? ''
-    expect(id).toMatch(/^polished-\d+$/)
+    const term = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect((await term.find({ key: 'prompt-master-polished' }))?.text).toBe('💬')
+    await term.press({ key: 'prompt-master-polished' })
+    expect(world.asked.at(-1)?.question, 'the dialog shows the polished prompt').toContain(REWRITE)
+    expect(world.asked.at(-1)?.header).toBe('Polished')
+    expect(world.asked.at(-1)?.options).toEqual(['Close', 'Copy it'])
+    expect(world.copied).toEqual([{ text: REWRITE, surface: 'terminal' }])
+    expect(world.toasts.at(-1)).toBe('Polished prompt copied.')
+    await term.unmount()
 
-    for (const surface of SURFACES) {
-      const ui = await $.ui.mount({ ...placedProps(id), surface })
-      const toggle = await ui.find({ key: `toggle-${id}` })
-      expect(toggle?.text, surface).toBe('▸ ✨ Polished prompt')
-      expect(await ui.find({ text: /hardware workbook/ }), `${surface}: collapsed at first`).toBeUndefined()
-
-      await ui.press({ key: `toggle-${id}` })
-      expect((await ui.find({ key: `toggle-${id}` }))?.text, surface).toBe('▾ ✨ Polished prompt')
-      expect(await ui.find({ text: /hardware workbook/ }), `${surface}: open shows the polished text`).toBeDefined()
-
-      await ui.press({ key: `toggle-${id}` })
-      await ui.unmount()
-    }
+    world.draft = 'my half-typed note'
+    const desk = await $.ui.mount({ ...BAND, surface: 'desktop' })
+    await desk.press({ key: 'prompt-master-polished' })
+    expect(world.asked.at(-1)?.options, 'the desktop takes no copy from a mod').toEqual(['Close', 'Put in prompt box'])
+    expect(world.fills, 'added after the draft, never over it').toEqual([{ text: `\n\n${REWRITE}`, mode: 'append' }])
+    expect(world.draft).toBe(`my half-typed note\n\n${REWRITE}`)
+    expect(world.toasts.at(-1)).toBe('Polished prompt is in the prompt box.')
+    expect(world.copied, 'no copy tried on the desktop').toHaveLength(1)
+    await desk.unmount()
   })
 
-  test("another plugin's placed row is left alone", async ($, on) => {
-    worldOf(on)
-    on('ui.render', { component: 'Placed' }, ($, e) => {
-      const { Text } = $.ui.resolve(e)
+  test('an empty prompt box just takes the polished prompt', async ($, on) => {
+    const world = worldOf(on, { replies: [plan({ action: 'rewrite', reason: 'r' }, REWRITE)], answers: ['Put in prompt box'] })
+    await $.session.start(SESSION)
+    await $.prompt.submit(typed(ROUGH))
 
-      return <Text>theirs</Text>
-    })
+    const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+    await ui.press({ key: 'prompt-master-polished' })
+    expect(world.fills).toEqual([{ text: REWRITE, mode: 'replace' }])
+    await ui.unmount()
+  })
+
+  test('no 💬 until a prompt is polished; a prompt sent as typed adds none', async ($, on) => {
+    worldOf(on, { replies: [plan({ action: 'pass', reason: 'clear' })] })
     await $.session.start(SESSION)
 
-    const ui = await $.ui.mount({ plugin: NAME, component: 'Placed', props: { id: 'polished-1', plugin: 'someone-else' }, surface: 'desktop' })
+    const before = await $.ui.mount({ ...BAND, surface: 'desktop' })
+    expect(await before.find({ key: 'prompt-master-polished' })).toBeUndefined()
+    await before.unmount()
 
-    expect(await ui.find({ text: 'theirs' })).toBeDefined()
+    await $.prompt.submit(typed(ROUGH))
+    const after = await $.ui.mount({ ...BAND, surface: 'desktop' })
+    expect(await after.find({ key: 'prompt-master-polished' })).toBeUndefined()
+    await after.unmount()
+  })
+
+  test('Close, or closing the dialog, copies nothing', async ($, on) => {
+    const world = worldOf(on, { replies: [plan({ action: 'rewrite', reason: 'r' }, REWRITE)], answers: ['Close', { dismiss: true }] })
+    await $.session.start(SESSION)
+    await $.prompt.submit(typed(ROUGH))
+
+    const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+    await ui.press({ key: 'prompt-master-polished' })
+    await ui.press({ key: 'prompt-master-polished' })
+    expect(world.asked).toHaveLength(2)
+    expect(world.copied).toEqual([])
     await ui.unmount()
   })
 })

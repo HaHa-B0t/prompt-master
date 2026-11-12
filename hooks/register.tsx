@@ -2,10 +2,10 @@
 // missing, then rewrites it with a clear prompt framework. One button above
 // the prompt box (and /prompt-master) turns it on or off.
 
-import { atom, memberOf, read, update } from 'claude-code'
-import type { EngineInterface as Engine, PluginOptions, Register, SessionMessage } from 'claude-code'
+import { atom, read, update } from 'claude-code'
+import type { EngineInterface as Engine, PluginOptions, Register, RenderSurface, SessionMessage } from 'claude-code'
 
-import type { Phase, Polished } from '../types'
+import type { Phase } from '../types'
 import {
   FIND_IT,
   SKIP_IT,
@@ -25,8 +25,14 @@ import type { Answer, Request, Situation } from './prompts'
 
 const isOn = atom({ plugin: 'prompt-master', key: 'isOn' } as const, true)
 const phase = atom({ plugin: 'prompt-master', key: 'phase' } as const, 'idle' as Phase)
-// One per polished prompt, keyed by the id of the row placed under it.
-const polished = atom({ plugin: 'prompt-master', key: 'polished' } as const, { text: '', isOpen: false } as Polished)
+// This chat's latest polished prompt, opened from the 💬 in the band.
+// The desktop app draws no rows a mod adds to the chat, so it lives there.
+const lastPolished = atom({ plugin: 'prompt-master', key: 'lastPolished' } as const, '')
+
+// The 💬 dialog's choices.
+const CLOSE = 'Close'
+const COPY_IT = 'Copy it'
+const TO_PROMPT_BOX = 'Put in prompt box'
 
 // On/off is kept across sessions here.
 const STORE_KEY = 'isOn'
@@ -223,15 +229,37 @@ function originalNote(raw: string, answers: readonly Answer[]): string {
   return `The prompt above was polished from the person's own words by their Prompt Master tool. Follow it; check any stated assumption against what you find. Use the original below only to confirm exact names, numbers and paths. Do not mention Prompt Master or this note.${qa}\n<original_prompt>\n${clip(raw, ORIGINAL_NOTE_CHARS)}\n</original_prompt>`
 }
 
-// Places a collapsed "Polished prompt" row at the end of the chat, which is
-// right under the message that just went in.
-async function showPolished($: Engine, text: string) {
+// The 💬 press: the latest polished prompt in Claude's question dialog (the
+// one place the desktop app draws long text for a mod). Only the terminal
+// takes a mod's copy; the apps get it put in the prompt box instead.
+async function openPolished($: Engine, surface: RenderSurface) {
+  const text = await read($, lastPolished)
+  if (!text) return
+  const action = surface === 'terminal' ? COPY_IT : TO_PROMPT_BOX
+  let choice: string
   try {
-    const id = `polished-${Math.round(await $.clock.now())}`
-    await update($, memberOf(polished, { requestId: id }), () => ({ text, isOpen: false }))
-    await $.ui.place({ id })
+    choice = await $.ui.ask(`Your last polished prompt (what Claude received):\n\n${text}\n\nClose it?`, {
+      options: [CLOSE, action],
+      header: 'Polished',
+    })
   } catch {
-    // Display only: the prompt already went in.
+    return // closed
+  }
+  if (choice !== action) return
+  try {
+    if (action === COPY_IT) {
+      const copied = await $.ui.copy({ text, surface })
+      $.ui.toast(copied.isCopied ? 'Polished prompt copied.' : "Couldn't copy the polished prompt here.")
+    } else {
+      // After any draft already there, never over it.
+      const box = await $.prompt.read()
+      const filled = await $.prompt.fill(
+        box.text.trim() ? { text: `\n\n${text}`, mode: 'append' } : { text, mode: 'replace' },
+      )
+      $.ui.toast(filled.isFilled ? 'Polished prompt is in the prompt box.' : "Couldn't put the polished prompt in the prompt box here.")
+    }
+  } catch {
+    $.ui.toast("Couldn't do that here.")
   }
 }
 
@@ -422,9 +450,9 @@ export const register: Register = (on, options) => {
       )
 
       const entered = await next({ ...e, text: final, context: [...(e.context ?? []), originalNote(raw, answers)] })
-      // The desktop app's bubble keeps the person's own words, so show the
-      // polished version in a row right under it. Display only: never sent.
-      if (entered.drop === undefined) await showPolished($, final)
+      // The desktop app's bubble keeps the person's own words: the 💬 in the
+      // band opens what Claude received.
+      if (entered.drop === undefined) await update($, lastPolished, () => final)
 
       return entered
     } finally {
@@ -448,6 +476,7 @@ export const register: Register = (on, options) => {
 
     const active = await read($, isOn)
     const now = await read($, phase)
+    const latest = await read($, lastPolished)
     const { Box, Button, Text } = $.ui.resolve(e)
 
     const row = (
@@ -460,6 +489,10 @@ export const register: Register = (on, options) => {
           {...(active ? {} : { dimColor: true })}
           onPress={() => void toggle($)}
         />
+        {/* Once a prompt is polished: opens what Claude received. */}
+        {latest ? (
+          <Button key="prompt-master-polished" label="💬" plain onPress={() => void openPolished($, e.surface)} />
+        ) : null}
         {now !== 'idle' ? <Text dimColor>{PHASE_TEXT[now]}</Text> : null}
       </Box>
     )
@@ -471,37 +504,6 @@ export const register: Register = (on, options) => {
       </Box>
     ) : (
       row
-    )
-  })
-
-  // The row under a polished message: click to show or hide the polished text.
-  on('ui.render', { component: 'Placed' }, async ($, e, next) => {
-    if (e.props.plugin !== $.plugin.name || !e.props.id.startsWith('polished-')) return next(e)
-    const member = memberOf(polished, { requestId: e.props.id })
-    const shown = await read($, member)
-    if (!shown.text) return next(e)
-
-    const els = $.ui.resolve(e)
-    const { Box, Button, Text } = els
-
-    return (
-      <Box flexDirection="column">
-        <Button
-          key={`toggle-${e.props.id}`}
-          plain
-          dimColor
-          onPress={() => void update($, member, v => ({ ...v, isOpen: !v.isOpen }))}
-        >
-          {`${shown.isOpen ? '▾' : '▸'} ✨ Polished prompt`}
-        </Button>
-        {shown.isOpen ? (
-          'Markdown' in els ? (
-            <els.Markdown key={`text-${e.props.id}`} text={shown.text} />
-          ) : (
-            <Text>{shown.text}</Text>
-          )
-        ) : null}
-      </Box>
     )
   })
 

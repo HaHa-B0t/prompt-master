@@ -7,7 +7,7 @@ Polishes your rough prompt before Claude reads it.
 3. If something that changes the result is missing, it asks you (up to 3 short questions, in Claude's own question dialog).
 4. It rewrites the prompt with a clear frame (Task, Why, Context, Requirements, Steps, Output, Done when; only the parts that help) and sends the rewrite.
 
-Your message bubble keeps your own words; a **▸ ✨ Polished prompt** row right under it opens to the version Claude received.
+Once a prompt is polished, a **💬** appears next to the ✨ above the prompt box. Click it to see the latest polished prompt (what Claude received), with **Put in prompt box** in the apps (to edit and resend it) or **Copy it** in a terminal. The desktop app's bubble shows your own words; the mobile app shows the polished version.
 
 Your facts, names, numbers, file paths and part numbers are kept exactly. Nothing is invented. Long pastes (logs, tables, code) go through untouched.
 
