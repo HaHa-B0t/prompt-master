@@ -1,6 +1,6 @@
 {
   "name": "prompt-master",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Polishes your rough prompt before Claude reads it: asks what's missing, then rewrites it with a clear prompt framework. One-click on/off button above the prompt box.",
   "types": "./types/index.d.ts",
   "userConfig": {
@@ -9,7 +9,11 @@
       "title": "Prompt Master model",
       "description": "Which Claude model reads and rewrites your prompts",
       "default": "sonnet",
-      "options": ["sonnet", "opus", "haiku"]
+      "options": [
+        "sonnet",
+        "opus",
+        "haiku"
+      ]
     },
     "maxQuestions": {
       "type": "number",
@@ -20,8 +24,8 @@
     "review": {
       "type": "boolean",
       "title": "Review before sending",
-      "description": "Show the polished prompt first: send it, send your original, or type what to change",
-      "default": false
+      "description": "Show the polished prompt in a dialog before it is sent: send it, try another version, send your original, or type what to change",
+      "default": true
     }
   }
 }

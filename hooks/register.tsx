@@ -3,7 +3,7 @@
 // the prompt box (and /prompt-master) turns it on or off.
 
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface as Engine, PluginOptions, Register, RenderSurface, SessionMessage } from 'claude-code'
+import type { EngineInterface as Engine, PluginOptions, Register, SessionMessage } from 'claude-code'
 
 import type { Phase } from '../types'
 import {
@@ -25,14 +25,6 @@ import type { Answer, Request, Situation } from './prompts'
 
 const isOn = atom({ plugin: 'prompt-master', key: 'isOn' } as const, true)
 const phase = atom({ plugin: 'prompt-master', key: 'phase' } as const, 'idle' as Phase)
-// This chat's latest polished prompt, opened from the 💬 in the band.
-// The desktop app draws no rows a mod adds to the chat, so it lives there.
-const lastPolished = atom({ plugin: 'prompt-master', key: 'lastPolished' } as const, '')
-
-// The 💬 dialog's choices.
-const CLOSE = 'Close'
-const COPY_IT = 'Copy it'
-const TO_PROMPT_BOX = 'Put in prompt box'
 
 // On/off is kept across sessions here.
 const STORE_KEY = 'isOn'
@@ -229,40 +221,6 @@ function originalNote(raw: string, answers: readonly Answer[]): string {
   return `The prompt above was polished from the person's own words by their Prompt Master tool. Follow it; check any stated assumption against what you find. Use the original below only to confirm exact names, numbers and paths. Do not mention Prompt Master or this note.${qa}\n<original_prompt>\n${clip(raw, ORIGINAL_NOTE_CHARS)}\n</original_prompt>`
 }
 
-// The 💬 press: the latest polished prompt in Claude's question dialog (the
-// one place the desktop app draws long text for a mod). Only the terminal
-// takes a mod's copy; the apps get it put in the prompt box instead.
-async function openPolished($: Engine, surface: RenderSurface) {
-  const text = await read($, lastPolished)
-  if (!text) return
-  const action = surface === 'terminal' ? COPY_IT : TO_PROMPT_BOX
-  let choice: string
-  try {
-    choice = await $.ui.ask(`Your last polished prompt (what Claude received):\n\n${text}\n\nClose it?`, {
-      options: [CLOSE, action],
-      header: 'Polished',
-    })
-  } catch {
-    return // closed
-  }
-  if (choice !== action) return
-  try {
-    if (action === COPY_IT) {
-      const copied = await $.ui.copy({ text, surface })
-      $.ui.toast(copied.isCopied ? 'Polished prompt copied.' : "Couldn't copy the polished prompt here.")
-    } else {
-      // After any draft already there, never over it.
-      const box = await $.prompt.read()
-      const filled = await $.prompt.fill(
-        box.text.trim() ? { text: `\n\n${text}`, mode: 'append' } : { text, mode: 'replace' },
-      )
-      $.ui.toast(filled.isFilled ? 'Polished prompt is in the prompt box.' : "Couldn't put the polished prompt in the prompt box here.")
-    }
-  } catch {
-    $.ui.toast("Couldn't do that here.")
-  }
-}
-
 // ---------------------------------------------------------------- hooks
 
 export const register: Register = (on, options) => {
@@ -450,9 +408,6 @@ export const register: Register = (on, options) => {
       )
 
       const entered = await next({ ...e, text: final, context: [...(e.context ?? []), originalNote(raw, answers)] })
-      // The desktop app's bubble keeps the person's own words: the 💬 in the
-      // band opens what Claude received.
-      if (entered.drop === undefined) await update($, lastPolished, () => final)
 
       return entered
     } finally {
@@ -469,18 +424,17 @@ export const register: Register = (on, options) => {
   })
 
   // The on/off button, in the band right above the prompt box. Whatever
-  // another plugin draws there stays, with this row under it.
+  // another plugin draws there stays, on the same row after it.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const below = await next(e)
     if (e.props.hasSurvey) return below
 
     const active = await read($, isOn)
     const now = await read($, phase)
-    const latest = await read($, lastPolished)
     const { Box, Button, Text } = $.ui.resolve(e)
 
     const row = (
-      <Box key="prompt-master" flexDirection="row" gap={1}>
+      <Box key="prompt-master" flexDirection="row" gap={1} flexShrink={0}>
         {/* The star alone: bright when on, dim when off. */}
         <Button
           key="prompt-master-toggle"
@@ -489,18 +443,19 @@ export const register: Register = (on, options) => {
           {...(active ? {} : { dimColor: true })}
           onPress={() => void toggle($)}
         />
-        {/* Once a prompt is polished: opens what Claude received. */}
-        {latest ? (
-          <Button key="prompt-master-polished" label="💬" plain onPress={() => void openPolished($, e.surface)} />
-        ) : null}
         {now !== 'idle' ? <Text dimColor>{PHASE_TEXT[now]}</Text> : null}
       </Box>
     )
 
+    // One row either way: the star first, then whatever is drawn under this
+    // mod (e.g. usage-bars-chat's bars and quote) filling the rest. Which mod
+    // draws first can change when they are reinstalled, so this never stacks.
     return below ? (
-      <Box flexDirection="column">
-        {below}
+      <Box flexDirection="row" gap={2}>
         {row}
+        <Box key="prompt-master-rest" flexGrow={1}>
+          {below}
+        </Box>
       </Box>
     ) : (
       row

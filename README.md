@@ -7,7 +7,7 @@ Polishes your rough prompt before Claude reads it.
 3. If something that changes the result is missing, it asks you (up to 3 short questions, in Claude's own question dialog).
 4. It rewrites the prompt with a clear frame (Task, Why, Context, Requirements, Steps, Output, Done when; only the parts that help) and sends the rewrite.
 
-Once a prompt is polished, a **💬** appears next to the ✨ above the prompt box. Click it to see the latest polished prompt (what Claude received), with **Put in prompt box** in the apps (to edit and resend it) or **Copy it** in a terminal. The desktop app's bubble shows your own words; the mobile app shows the polished version.
+Before it is sent, the polished prompt is shown in full in Claude's question dialog: Send it, Try another version, Send my original, or type what to change (review, on by default). The desktop app's bubble shows your own words; the mobile app shows the polished version.
 
 Your facts, names, numbers, file paths and part numbers are kept exactly. Nothing is invented. Long pastes (logs, tables, code) go through untouched.
 
@@ -56,6 +56,6 @@ In the plugin's settings:
 
 - **Prompt Master model**: `sonnet` (default), `opus` or `haiku`.
 - **Most questions per prompt**: 0 to 4 (default 3; 0 = never ask, just rewrite).
-- **Review before sending**: show the polished prompt first, then choose Send it, Try another version (a fresh rewrite), Send my original, or type what to change. The dialog's own Skip button also sends your original.
+- **Review before sending** (default on): show the polished prompt first, then choose Send it, Try another version (a fresh rewrite), Send my original, or type what to change. The dialog's own Skip button also sends your original.
 
 Each polished prompt costs one or two extra model calls.

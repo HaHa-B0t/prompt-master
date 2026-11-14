@@ -2,10 +2,19 @@
 // beneath the mod and stand for the engine: the helper model, the question
 // dialog, the store, and the session the prompt finally enters.
 
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect, test as kitTest } from 'claude-code/testing'
+import type { TestRest } from 'claude-code/testing'
 import type { ModelCompleteInput, On, PromptSubmitInput, SessionMessage } from 'claude-code'
 
 import { extractPrompt, isMachineFramed, isQuickReply, parsePlan } from './prompts'
+
+// Review is on by default when shipped; most tests here look at the flow
+// without it, so they start from review off unless they set it.
+function test(name: string, ...rest: TestRest): void {
+  if (rest.length === 1) return kitTest(name, { options: { review: false } }, rest[0])
+  const [opts, body] = rest
+  return kitTest(name, { ...opts, options: { review: false, ...(opts.options ?? {}) } }, body)
+}
 
 const NAME = 'prompt-master'
 const SESSION = { cwd: 'C:/Vault', surface: 'desktop' as const, isInteractive: true }
@@ -572,76 +581,6 @@ describe('what goes through untouched', () => {
   })
 })
 
-// ------------------------------------------------------------------ the 💬 in the band
-
-describe('seeing the polished prompt', () => {
-  test('after a polished prompt the band shows 💬: Copy it on the terminal, Put in prompt box in the apps', async ($, on) => {
-    const world = worldOf(on, { replies: [plan({ action: 'rewrite', reason: 'r' }, REWRITE)], answers: ['Copy it', 'Put in prompt box'] })
-    await $.session.start(SESSION)
-
-    await $.prompt.submit(typed(ROUGH))
-    expect(world.submitted[0]?.text, 'Claude (and the phone) get the polished prompt').toBe(REWRITE)
-
-    const term = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    expect((await term.find({ key: 'prompt-master-polished' }))?.text).toBe('💬')
-    await term.press({ key: 'prompt-master-polished' })
-    expect(world.asked.at(-1)?.question, 'the dialog shows the polished prompt').toContain(REWRITE)
-    expect(world.asked.at(-1)?.header).toBe('Polished')
-    expect(world.asked.at(-1)?.options).toEqual(['Close', 'Copy it'])
-    expect(world.copied).toEqual([{ text: REWRITE, surface: 'terminal' }])
-    expect(world.toasts.at(-1)).toBe('Polished prompt copied.')
-    await term.unmount()
-
-    world.draft = 'my half-typed note'
-    const desk = await $.ui.mount({ ...BAND, surface: 'desktop' })
-    await desk.press({ key: 'prompt-master-polished' })
-    expect(world.asked.at(-1)?.options, 'the desktop takes no copy from a mod').toEqual(['Close', 'Put in prompt box'])
-    expect(world.fills, 'added after the draft, never over it').toEqual([{ text: `\n\n${REWRITE}`, mode: 'append' }])
-    expect(world.draft).toBe(`my half-typed note\n\n${REWRITE}`)
-    expect(world.toasts.at(-1)).toBe('Polished prompt is in the prompt box.')
-    expect(world.copied, 'no copy tried on the desktop').toHaveLength(1)
-    await desk.unmount()
-  })
-
-  test('an empty prompt box just takes the polished prompt', async ($, on) => {
-    const world = worldOf(on, { replies: [plan({ action: 'rewrite', reason: 'r' }, REWRITE)], answers: ['Put in prompt box'] })
-    await $.session.start(SESSION)
-    await $.prompt.submit(typed(ROUGH))
-
-    const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
-    await ui.press({ key: 'prompt-master-polished' })
-    expect(world.fills).toEqual([{ text: REWRITE, mode: 'replace' }])
-    await ui.unmount()
-  })
-
-  test('no 💬 until a prompt is polished; a prompt sent as typed adds none', async ($, on) => {
-    worldOf(on, { replies: [plan({ action: 'pass', reason: 'clear' })] })
-    await $.session.start(SESSION)
-
-    const before = await $.ui.mount({ ...BAND, surface: 'desktop' })
-    expect(await before.find({ key: 'prompt-master-polished' })).toBeUndefined()
-    await before.unmount()
-
-    await $.prompt.submit(typed(ROUGH))
-    const after = await $.ui.mount({ ...BAND, surface: 'desktop' })
-    expect(await after.find({ key: 'prompt-master-polished' })).toBeUndefined()
-    await after.unmount()
-  })
-
-  test('Close, or closing the dialog, copies nothing', async ($, on) => {
-    const world = worldOf(on, { replies: [plan({ action: 'rewrite', reason: 'r' }, REWRITE)], answers: ['Close', { dismiss: true }] })
-    await $.session.start(SESSION)
-    await $.prompt.submit(typed(ROUGH))
-
-    const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
-    await ui.press({ key: 'prompt-master-polished' })
-    await ui.press({ key: 'prompt-master-polished' })
-    expect(world.asked).toHaveLength(2)
-    expect(world.copied).toEqual([])
-    await ui.unmount()
-  })
-})
-
 // ------------------------------------------------------------------ failures
 
 describe('when something goes wrong the prompt goes as typed', () => {
@@ -809,7 +748,7 @@ describe('turning it on and off', () => {
     await after.unmount()
   })
 
-  test('(i) the band keeps another mod\'s drawing above the toggle', {
+  test('(i) the band keeps another mod\'s drawing on the same row, after the star', {
     plugins: [
       {
         name: 'usage-bars',
@@ -831,6 +770,7 @@ describe('turning it on and off', () => {
       const ui = await $.ui.mount({ ...BAND, surface })
       expect(await ui.find({ type: 'Text', text: 'usage bars' }), surface).toBeDefined()
       expect(await ui.find({ key: 'prompt-master-toggle' }), surface).toBeDefined()
+      expect(await ui.find({ key: 'prompt-master-rest' }), `${surface}: the other mod sits in the row beside the star`).toBeDefined()
       await ui.unmount()
     }
   })
@@ -1053,5 +993,20 @@ describe('(j) reading the model\'s replies', () => {
     expect(isMachineFramed('Do the brief. The user is not present to answer questions.')).toBe(true)
     expect(isMachineFramed('What does <scheduled-task> mean in my transcript?')).toBe(false)
     expect(isMachineFramed(ROUGH)).toBe(false)
+  })
+})
+
+describe('shipped defaults', () => {
+  kitTest('review is on by default: the dialog shows the whole polished prompt before it is sent', async ($, on) => {
+    const world = worldOf(on, { replies: [plan({ action: 'rewrite', reason: 'r' }, REWRITE)], answers: ['Send it'] })
+    await $.session.start(SESSION)
+
+    await $.prompt.submit(typed(ROUGH))
+
+    expect(world.asked).toHaveLength(1)
+    expect(world.asked[0]?.header).toBe('Review')
+    expect(world.asked[0]?.question).toContain(REWRITE)
+    expect(world.asked[0]?.options).toEqual(['Send it', 'Try another version', 'Send my original'])
+    expect(world.submitted[0]?.text, 'Claude (and the phone) get the polished prompt').toBe(REWRITE)
   })
 })
