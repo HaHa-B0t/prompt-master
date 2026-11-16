@@ -108,6 +108,31 @@ async function toggle($: Engine) {
   await setOn($, value, true)
 }
 
+// The name the engine gives this mod's band row, learned when it is drawn.
+let ownRow = 'prompt-master'
+
+type BandDrawing = Parameters<Engine['ui']['resolve']>[0]
+
+// The star alone (bright when on, dim when off), and what Prompt Master is doing.
+async function starRow($: Engine, e: BandDrawing) {
+  const active = await read($, isOn)
+  const now = await read($, phase)
+  const { Box, Button, Text } = $.ui.resolve(e)
+
+  return (
+    <Box key="prompt-master" flexDirection="row" gap={1} flexShrink={0}>
+      <Button
+        key="prompt-master-toggle"
+        label="✨"
+        plain
+        {...(active ? {} : { dimColor: true })}
+        onPress={() => void toggle($)}
+      />
+      {now !== 'idle' ? <Text dimColor>{PHASE_TEXT[now]}</Text> : null}
+    </Box>
+  )
+}
+
 // ---------------------------------------------------------------- chat context
 
 const MACHINE_ROW = /^\s*<(system-reminder|command-|local-command|task-notification|scheduled-task)/i
@@ -423,33 +448,18 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  // The on/off button, in the band right above the prompt box. Whatever
-  // another plugin draws there stays, on the same row after it.
+  // The on/off button, in the band right above the prompt box. The engine
+  // gives each mod its own row there and stacks them.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const below = await next(e)
     if (e.props.hasSurvey) return below
+    if (e.plugin) ownRow = e.plugin
 
-    const active = await read($, isOn)
-    const now = await read($, phase)
-    const { Box, Button, Text } = $.ui.resolve(e)
+    const row = await starRow($, e)
+    const { Box } = $.ui.resolve(e)
 
-    const row = (
-      <Box key="prompt-master" flexDirection="row" gap={1} flexShrink={0}>
-        {/* The star alone: bright when on, dim when off. */}
-        <Button
-          key="prompt-master-toggle"
-          label="✨"
-          plain
-          {...(active ? {} : { dimColor: true })}
-          onPress={() => void toggle($)}
-        />
-        {now !== 'idle' ? <Text dimColor>{PHASE_TEXT[now]}</Text> : null}
-      </Box>
-    )
-
-    // One row either way: the star first, then whatever is drawn under this
-    // mod (e.g. usage-bars-chat's bars and quote) filling the rest. Which mod
-    // draws first can change when they are reinstalled, so this never stacks.
+    // An older engine handed other mods' drawing down this chain: keep it on
+    // the same row, after the star.
     return below ? (
       <Box flexDirection="row" gap={2}>
         {row}
@@ -460,6 +470,28 @@ export const register: Register = (on, options) => {
     ) : (
       row
     )
+  })
+
+  // The band stacks one row per mod. Rather than a line of its own, the star
+  // row goes beside the others (usage-bars-chat's bars), so they share one line.
+  // This site has no element table: the wrapper is plain Box data.
+  on('ui.render', { component: 'AbovePromptList' }, async ($, e, next) => {
+    if (e.props.hasSurvey) return next(e)
+    const mine = e.props.rows.filter(r => r.plugin === ownRow)
+    const rest = e.props.rows.filter(r => r.plugin !== ownRow)
+    if (mine.length === 0 || rest.length === 0) return next(e)
+
+    const star = await next({ ...e, props: { ...e.props, rows: mine } })
+    const others = await next({ ...e, props: { ...e.props, rows: rest } })
+
+    return {
+      type: 'Box',
+      props: { flexDirection: 'row', gap: 2 },
+      children: [
+        { type: 'Box', props: { key: 'prompt-master-star', flexShrink: 0 }, children: [star] },
+        { type: 'Box', props: { key: 'prompt-master-rest', flexGrow: 1 }, children: [others] },
+      ],
+    }
   })
 
   // A small "prompt master" label among the footer's mode labels while on.

@@ -775,6 +775,44 @@ describe('turning it on and off', () => {
     }
   })
 
+  test('(i) with one row per mod, the star joins the next row instead of a line of its own', async ($, on) => {
+    worldOf(on)
+    // The engine stacks whatever rows reach it.
+    on('ui.render', { component: 'AbovePromptList' }, ($, e) => ({
+      type: 'Box' as const,
+      props: { flexDirection: 'column' },
+      children: e.props.rows.map(r => r.tree),
+    }))
+    await $.session.start(SESSION)
+    const text = (s: string) => ({ type: 'Text' as const, props: {}, children: [s] })
+
+    for (const surface of SURFACES) {
+      // Draw the band row once, so the mod learns its row's name.
+      const own = await $.ui.mount({ ...BAND, surface })
+      await own.unmount()
+
+      const drawn = JSON.stringify(
+        await $.ui.render({
+          component: 'AbovePromptList',
+          surface,
+          requestId: 'band',
+          props: {
+            ...BAND.props,
+            rows: [
+              { plugin: NAME, tree: text('own star row') },
+              { plugin: 'usage-bars', tree: text('usage bars') },
+            ],
+          },
+        }),
+      )
+      expect(drawn, surface).toContain('prompt-master-star')
+      expect(drawn, surface).toContain('prompt-master-rest')
+      expect(drawn, surface).toContain('usage bars')
+      expect(drawn, surface).toContain('own star row')
+      expect(drawn, `${surface}: side by side`).toContain('"flexDirection":"row"')
+    }
+  })
+
   test('(i) the band steps aside while a survey shows', async ($, on) => {
     worldOf(on)
     await $.session.start(SESSION)
