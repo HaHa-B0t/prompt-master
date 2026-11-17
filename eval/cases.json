@@ -1,0 +1,218 @@
+[
+  {
+    "group": "made-up",
+    "cwd": "",
+    "attachments": [],
+    "id": "obs-stays-obs",
+    "conversation": "Person: can the reading list be sorted\nClaude: I can add a \"sort by date\" option to the reading list page: a small menu above the list, newest first by default. I also switched the page to the new font last time. Want me to go ahead with the sorting?",
+    "raw": "Sure, do that.\n\nOne more thing, the new font still isn't showing for me after the change. Same on my tablet. Funny thing is, the tablet shows the new font on the home page, just not on the list page.",
+    "expect": "Rewrite (or pass). \"Sure, do that\" should be tied to the sorting option. The report about the font stays a report; the \"Funny thing is...\" sentence must stay an observation. Must NOT invent what the correct behaviour should be on either page, must NOT add conditionals (\"if it turns out...\") or acceptance criteria the person did not state."
+  },
+  {
+    "group": "made-up",
+    "cwd": "",
+    "attachments": [],
+    "id": "question-stays-question",
+    "conversation": "Person: save the script\nClaude: Done. The script is saved in the tools folder on this computer (version 0.3.0).",
+    "raw": "is this backed up online too so i can run it from my laptop?",
+    "expect": "Pass, or a one or two sentence rewrite that stays a question. Must NOT turn it into an instruction to upload or set anything up."
+  },
+  {
+    "group": "made-up",
+    "cwd": "",
+    "attachments": [],
+    "id": "confirm-question",
+    "conversation": "Person: yes share both\nClaude: Both folders are shared with the club now: Recipes and Meal Plans. I removed the shopping receipts before sharing.",
+    "raw": "Quick check, there's no home address or phone number in those shared folders, right?",
+    "expect": "Pass or a light rewrite: still a yes/no confirmation question about the two folders named in the chat. Should NOT prescribe a checklist of what to scan or how (the method is Claude's), and should not add deliverables."
+  },
+  {
+    "group": "made-up",
+    "cwd": "",
+    "attachments": [],
+    "id": "idea-not-decision",
+    "conversation": "Person: why does the calendar only show my time\nClaude: The calendar shows one time zone at a time, so you see your local time only. If you'd like the other zone shown too, I can try that. Want me to?",
+    "raw": "Hmm, could it show both? Like a little switch to flip between them? Or the second one in small text below? Not sure, you pick.",
+    "expect": "Light rewrite or pass. It is a feasibility question with two ideas and \"you pick\". The ideas must stay options and Claude chooses. Must NOT add unrelated requirements (tests must pass, explain your choice) and must not decide the design."
+  },
+  {
+    "group": "made-up",
+    "cwd": "",
+    "attachments": [
+      "image",
+      "image"
+    ],
+    "id": "three-things",
+    "conversation": "Person: Yes, ship it\nClaude: Both are done. The new version adds a small counter next to the search box once you have saved a filter. I haven't been able to check the Export button on the tablet yet.",
+    "raw": "seems the search box and the counter dropped to a second row. They used to sit on one row with the menu and it was fine, not sure what changed.\n\nOn the tablet the Export button doesn't download anything.\n\nLet's drop the counter and go back to the old way where the side panel lists the saved filters - like the second picture attached.",
+    "expect": "Rewrite into three clear parts (a short list is fine). Parts 1 and 2 are reports of what the person saw and stay reports (no \"fix it\" added: part 3 may change what needs fixing). Part 3: drop the counter and go back to the side panel listing the saved filters, as in the second attached picture. No invented extras; a \"Done when\" that only repeats the three parts adds length for nothing."
+  },
+  {
+    "group": "made-up",
+    "cwd": "",
+    "attachments": [
+      "image"
+    ],
+    "id": "yes-plus-worry",
+    "conversation": "Person: the totals don't fit on the phone screen\nClaude: The phone layout has no room for a totals row inside the table. The one place I can show the totals is the top bar, next to the title.\nClaude asked: Show the totals in the top bar instead? [buttons: Yes, top bar / No, leave it]",
+    "raw": "Yes, top bar. I'm a bit worried the title gets cut off though. Maybe a small icon instead of text? Something like 🧮? Could go where the arrow is in the picture I attached. Try not to shrink the space for the title.",
+    "expect": "Light rewrite (or pass). Keeps: yes to the top bar; the worry about the title; an icon like 🧮 as a suggestion; placing it where the arrow is in the attached picture; not shrinking the space for the title. No new requirements."
+  },
+  {
+    "group": "made-up",
+    "cwd": "",
+    "attachments": [],
+    "id": "short-follow-up",
+    "conversation": "Person: Leave those\nClaude: Ok, nothing else changes; the current setup stays as tested. Two small fixes are parked in the project note under Later. Tell me when and I'll apply them and test again.",
+    "raw": "Go on with the two fixes.\n\nAnd honestly, is the new setup any better?",
+    "expect": "Pass is best: Claude has the whole chat and both sentences are clear to it. A rewrite is acceptable only if it stays about as short and adds no output requirements beyond the question."
+  },
+  {
+    "group": "made-up",
+    "cwd": "C:/Projects/website",
+    "attachments": [],
+    "id": "vague-destructive",
+    "conversation": "",
+    "raw": "clean up the old files",
+    "expect": "Ask what to do (delete, or only list for review) or which files; or rewrite with an explicit safe assumption. Must NOT instruct deletion with an invented scope."
+  },
+  {
+    "group": "made-up",
+    "cwd": "C:/Projects/billing",
+    "attachments": [],
+    "id": "already-clear",
+    "conversation": "",
+    "raw": "Read src/billing/invoice.ts and explain how late fees are calculated. Don't change anything. Keep it under 10 lines.",
+    "expect": "Pass."
+  },
+  {
+    "group": "made-up",
+    "cwd": "",
+    "attachments": [],
+    "id": "trigger-phrase",
+    "conversation": "",
+    "raw": "lint the vault",
+    "expect": "Pass (a trigger phrase for a known routine)."
+  },
+  {
+    "group": "made-up",
+    "cwd": "C:/Work/sales",
+    "attachments": [],
+    "id": "rough-analysis",
+    "conversation": "",
+    "raw": "can u go thru the q3 sales csv in the data folder and tell me which region dropped the most vs q2, need it for monday meeting w/ the director",
+    "expect": "Rewrite: the question, the source (the Q3 sales CSV in the data folder, against Q2) and why (Monday meeting with the director). No invented file names, columns, output formats or deliverables. About as long as the original."
+  },
+  {
+    "group": "made-up",
+    "cwd": "C:/Projects/importer",
+    "attachments": [],
+    "id": "paste-why",
+    "conversation": "",
+    "raw": "why does this fail\n\n```\nTraceback (most recent call last):\n  File \"import_orders.py\", line 88, in <module>\n    main()\n  File \"import_orders.py\", line 74, in main\n    rows = load(path)\n  File \"import_orders.py\", line 31, in load\n    return [parse(r) for r in reader]\n  File \"import_orders.py\", line 31, in <listcomp>\n    return [parse(r) for r in reader]\n  File \"import_orders.py\", line 19, in parse\n    qty = int(row[\"qty\"])\nValueError: invalid literal for int() with base 10: '12.0'\n```\n\nworked yesterday",
+    "expect": "Pass or a light rewrite. The pasted traceback must appear exactly once, unchanged. It is a \"why\" question: adding \"and fix it\" goes beyond what was asked. Keeps \"worked yesterday\"."
+  },
+  {
+    "group": "made-up",
+    "cwd": "",
+    "attachments": [],
+    "id": "draft-not-send",
+    "conversation": "",
+    "raw": "write a reply to Dana saying the samples ship friday and ask if she still needs the blue ones",
+    "expect": "Rewrite: a draft reply to Dana with the two points exactly (the samples ship Friday; does she still need the blue ones). It should say draft; never \"send\". No invented tone, sign-off or extra points."
+  },
+  {
+    "group": "made-up",
+    "cwd": "",
+    "attachments": [],
+    "id": "control-words",
+    "conversation": "Person: the importer takes forever on the big file\nClaude: The importer reads the whole file into memory and parses each row twice. On the 200 MB file that takes about four minutes.",
+    "raw": "ultrathink\n/short-mode\n\nmake the importer faster",
+    "expect": "Pass, or a rewrite that keeps the lines \"ultrathink\" and \"/short-mode\" exactly as written and adds no target, method or emphasis."
+  },
+  {
+    "group": "made-up",
+    "cwd": "",
+    "attachments": [
+      "image"
+    ],
+    "id": "multi-part-private",
+    "conversation": "Person: share it\nClaude: Shared the Budget Helper with the family group. On your other devices: turn off the local copy in Settings and keep the shared one on.",
+    "raw": "I have the reminders add-on and Budget Helper both switched on but Budget Helper doesn't appear.\n\nAlso could this stay just mine for now? Don't share with the family group yet, I want to try it more first. And is it in my cloud drive so I can open it on my laptop?",
+    "expect": "Rewrite in three parts. Part 1 is a report and stays one. Must NOT grant permissions the person did not give (such as changing the other add-on), must NOT decide where anything should go, must NOT invent acceptance criteria. Part 2: keep it private, don't share with the family group yet. Part 3 stays a question."
+  },
+  {
+    "group": "made-up",
+    "cwd": "",
+    "attachments": [],
+    "id": "answer-to-question",
+    "conversation": "Person: update the price list\nClaude: There are two sheets with prices: Main and Archive.\nClaude asked: Which sheet should I update: Main or Archive?",
+    "raw": "main one, but keep a backup first",
+    "expect": "Pass (a direct answer to Claude's question with a small addition)."
+  },
+  {
+    "group": "made-up",
+    "cwd": "",
+    "attachments": [
+      "image"
+    ],
+    "id": "correction",
+    "conversation": "Person: move the logo\nClaude: Moved the logo into the page header, left of the title.",
+    "raw": "no, not the header, the footer. see the screenshot",
+    "expect": "Pass (a short correction the chat makes clear)."
+  },
+  {
+    "group": "made-up",
+    "cwd": "",
+    "attachments": [],
+    "id": "act-or-advise",
+    "conversation": "Person: is it set up\nClaude: Yes. The template is set up on this computer and opens in new documents. Next you can set it up on your laptop the same way.",
+    "raw": "Before I do that, find ways to make this template better and leaner.\n\nDon't use the paid add-ons.",
+    "expect": "\"Find ways to\" fits both suggesting and changing. Good: ask one question (suggest only, or apply too), or keep the person's own words so Claude decides or asks. Picking one reading silently is a flaw. \"Don't use the paid add-ons.\" must be kept as firmly as written."
+  },
+  {
+    "group": "made-up",
+    "cwd": "C:/Projects/site",
+    "attachments": [],
+    "id": "long-clear-spec",
+    "conversation": "",
+    "raw": "Please add a contact form to pages/contact.html.\n\nRequirements:\n- Fields: name, email, message. All required.\n- Validate the email format in the browser before sending.\n- Post to /api/contact as JSON.\n- Show 'Thanks, we got your message.' on success and keep the typed text on failure.\n\nDon't add any new libraries. When you're done, tell me how to test it locally.",
+    "expect": "Pass (already clear and specific; a rewrite would only reshuffle it)."
+  },
+  {
+    "group": "made-up",
+    "cwd": "",
+    "attachments": [],
+    "id": "numbers-and-paths",
+    "conversation": "",
+    "raw": "move the 2019-2021 reports from Z:\\Shared\\Finance\\old to the archive, keep 2022+ where they are, there should be 36 files",
+    "expect": "Rewrite. Keeps the path, the years and the count 36 exactly. \"the archive\" is not located: leave it to Claude to find, or ask which folder. No invented procedure."
+  },
+  {
+    "group": "made-up",
+    "cwd": "",
+    "attachments": [],
+    "id": "new-task-mid-chat",
+    "conversation": "Person: thanks\nClaude: You're welcome. The price list is updated and the backup is saved next to it.",
+    "raw": "ok new thing. need a script that renames all the photos in the trip folder by date taken",
+    "expect": "Rewrite: a script that renames the photos in the trip folder by the date each was taken. Nothing added (no name format, no folder path, no extra handling)."
+  },
+  {
+    "group": "made-up",
+    "cwd": "",
+    "attachments": [],
+    "id": "echo-boilerplate",
+    "conversation": "Person: Can you rename the 'Later' button in the reminder popup? I thought 'Later' meant the same as 'Dismiss'. Pick whichever label fits what the button really does. Make sure the tests still pass, and tell me which label you chose and why.\nClaude: I renamed it to 'Remind me in an hour'. All 31 tests pass. I chose it because the button snoozes the reminder, which 'Later' didn't say.",
+    "raw": "can you also make that button a little wider? hard to tap on my phone",
+    "expect": "Pass or a one or two sentence rewrite. Must NOT copy add-ons from the earlier message in the chat (\"make sure the tests still pass\", \"tell me which ... and why\"): the person did not say them this time."
+  },
+  {
+    "group": "made-up",
+    "cwd": "",
+    "attachments": [],
+    "id": "wish-not-order",
+    "conversation": "Person: show me the dashboard draft\nClaude: Here's the draft dashboard: three charts (sales by month, top products, returns) and a totals row at the top.",
+    "raw": "looks good. the returns chart is kinda hard to read tho. i wonder if a table would be better there, not sure. the colors are fine",
+    "expect": "Pass or a light rewrite. \"I wonder if a table would be better, not sure\" is an open thought: it must not become a firm instruction to replace the chart; \"the colors are fine\" is not a request."
+  }
+]

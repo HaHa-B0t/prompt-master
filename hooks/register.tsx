@@ -1,6 +1,7 @@
 // Prompt Master: reads the person's prompt before Claude does, asks what is
-// missing, then rewrites it with a clear prompt framework. One button above
-// the prompt box (and /prompt-master) turns it on or off.
+// missing, then rewrites it so it says the same thing clearly (it clarifies,
+// never extends). One button above the prompt box (and /prompt-master) turns
+// it on or off.
 
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface as Engine, PluginOptions, Register, SessionMessage } from 'claude-code'
@@ -11,10 +12,12 @@ import {
   SKIP_IT,
   SKIP_PREFIX,
   analyzeRequest,
+  clip,
   extractPrompt,
   isCutOff,
   isMachineFramed,
   isQuickReply,
+  isShortReply,
   maskPastes,
   parsePlan,
   restorePastes,
@@ -47,15 +50,22 @@ const OLD_ROW_HEAD = 300
 const OLD_ROW_TAIL = 400
 const NEWEST_REPLY_CHARS = 2000
 const HISTORY_CHARS = 6000
-const MODEL_TIMEOUT_MS = 90_000
+// The person waits for the helper, so it is kept quick: a fixed low effort
+// (measured on Sonnet: as quick and as good as its default, while high
+// effort took twice as long; it also keeps a slower-thinking model from
+// making the person wait) and a bound on a call that hangs.
+const MODEL_EFFORT = 'low'
+const MODEL_TIMEOUT_MS = 45_000
 const MAX_REVISIONS = 2
+// How many polished prompts of this chat keep their original beside them.
+const ORIGINALS_KEPT = 30
 
 // The review dialog's choices. Its own "Skip" button can't be renamed or hidden.
 const SEND_IT = 'Send it'
 const ANOTHER_VERSION = 'Try another version'
 const SEND_ORIGINAL = 'Send my original'
 const FRESH_VERSION =
-  'Write a noticeably different version: other wording and structure, the same facts, intent and scope.'
+  'Write another version: keep every fact, ask, limit and specific, with the same force and scope, and change only the wording, sentence order and layout.'
 const ORIGINAL_NOTE_CHARS = 20_000
 
 type Settings = { model: string; maxQuestions: number; review: boolean }
@@ -65,11 +75,52 @@ function settingsFrom(options: PluginOptions): Settings {
   const n = Number(options.maxQuestions)
   const maxQuestions = Number.isFinite(n) ? Math.max(0, Math.min(4, Math.round(n))) : 3
 
-  return { model, maxQuestions, review: options.review === true }
+  // On unless switched off, as the manifest's default says.
+  return { model, maxQuestions, review: options.review !== false }
 }
 
-function clip(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text
+// A rewrite that only changes case, punctuation or a "please" says nothing
+// new: not worth a review dialog. Erring toward "same" is safe: then the
+// person's own words are sent, never a rewrite they did not see.
+function bare(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\bplease\b/g, '')
+    .replace(/[^\p{L}\p{N}]+/gu, '')
+}
+
+// What happened to each prompt, counted across sessions for
+// "/prompt-master status": numbers only, never any text.
+const STATS_KEY = 'stats'
+type Outcome = 'quick' | 'clear' | 'polished' | 'original' | 'skipped'
+type Stats = Partial<Record<Outcome, number>>
+
+async function readStats($: Engine): Promise<Stats> {
+  try {
+    const saved = await $.store.get(STATS_KEY)
+
+    return typeof saved === 'object' && saved !== null ? { ...(saved as Stats) } : {}
+  } catch {
+    return {}
+  }
+}
+
+async function tally($: Engine, outcome: Outcome) {
+  try {
+    const stats = await readStats($)
+    stats[outcome] = (Number(stats[outcome]) || 0) + 1
+    await $.store.set(STATS_KEY, stats)
+  } catch {
+    // Counting is a nicety.
+  }
+}
+
+async function statsLine($: Engine): Promise<string> {
+  const stats = await readStats($)
+  const n = (k: Outcome) => Number(stats[k]) || 0
+  if (n('polished') + n('original') + n('clear') + n('quick') + n('skipped') === 0) return ''
+
+  return ` So far: ${n('polished')} polished, ${n('original')} sent as your original after review, ${n('clear')} already clear, ${n('quick')} quick replies, ${n('skipped')} skipped.`
 }
 
 // Keeps the start and the end of a long row: questions sit at the end.
@@ -135,8 +186,6 @@ async function starRow($: Engine, e: BandDrawing) {
 
 // ---------------------------------------------------------------- chat context
 
-const MACHINE_ROW = /^\s*<(system-reminder|command-|local-command|task-notification|scheduled-task)/i
-
 // What Claude asked at the end of a turn: the desktop next-step box
 // (a tool ending in wrap_up) or the AskUserQuestion dialog.
 function askedIn(row: SessionMessage): { lines: string[]; labels: string[] } {
@@ -167,8 +216,10 @@ function askedIn(row: SessionMessage): { lines: string[]; labels: string[] } {
 type Chat = { text: string; buttonLabels: string[] }
 
 // The last few turns: each of the person's prompts and the reply that ended
-// that turn (Claude's narration in between is left out), newest last.
-async function recentChat($: Engine): Promise<Chat> {
+// that turn (Claude's narration in between is left out), newest last. A
+// prompt this mod polished is shown as the person typed it (`originals`), so
+// the helper reads their voice and not its own earlier rewrite.
+async function recentChat($: Engine, originals: ReadonlyMap<string, string>): Promise<Chat> {
   let rows: SessionMessage[]
   try {
     rows = await $.session.messages()
@@ -181,8 +232,8 @@ async function recentChat($: Engine): Promise<Chat> {
   for (const row of rows) {
     const text = row.text.trim()
     if (row.role === 'user') {
-      if (text && !MACHINE_ROW.test(text) && !(row.toolResults?.length && !text)) {
-        turns.push({ prompt: text, reply: '', asked: [], labels: [] })
+      if (text && !isMachineFramed(text)) {
+        turns.push({ prompt: originals.get(text) ?? text, reply: '', asked: [], labels: [] })
       }
       continue
     }
@@ -227,7 +278,14 @@ async function recentChat($: Engine): Promise<Chat> {
 async function complete($: Engine, model: string, req: Request, signal: AbortSignal) {
   try {
     const r = await $.model.complete(
-      { model, system: req.system, prompt: req.prompt, maxTokens: req.maxTokens, timeoutMs: MODEL_TIMEOUT_MS },
+      {
+        model,
+        system: req.system,
+        prompt: req.prompt,
+        maxTokens: req.maxTokens,
+        effort: MODEL_EFFORT,
+        timeoutMs: MODEL_TIMEOUT_MS,
+      },
       { signal },
     )
 
@@ -237,13 +295,18 @@ async function complete($: Engine, model: string, req: Request, signal: AbortSig
   }
 }
 
-// What the model reads beside the rewrite (the person never sees it).
-function originalNote(raw: string, answers: readonly Answer[]): string {
+// What the model reads beside the rewrite (the person never sees it). The
+// original is given with pasted material still masked: the paste itself is
+// already in the prompt above, so it is not sent twice. The note is also a
+// backstop: should a rewrite ever say more than the person did, Claude is
+// told whose wording that is.
+function originalNote(masked: string, hasPastes: boolean, answers: readonly Answer[]): string {
   const qa = answers.length
     ? `\nIt includes these answers the person gave:\n${answers.map(a => `- ${a.question} ${a.answer}`).join('\n')}\n`
     : ''
+  const pastes = hasPastes ? '\nEach [[PASTE n: ...]] marker below stands for material pasted in the prompt above.' : ''
 
-  return `The prompt above was polished from the person's own words by their Prompt Master tool. Follow it; check any stated assumption against what you find. Use the original below only to confirm exact names, numbers and paths. Do not mention Prompt Master or this note.${qa}\n<original_prompt>\n${clip(raw, ORIGINAL_NOTE_CHARS)}\n</original_prompt>`
+  return `The prompt above was polished from the person's own words by their Prompt Master tool. Follow it; check any stated assumption against what you find. It is meant to ask for nothing the original below does not: if a part goes further than the original and the answers listed here (an extra requirement, permission, limit or deliverable), that part is the tool's wording, not the person's decision, so do not change, send, publish or delete anything on its strength alone. Use the original to confirm exact names, numbers and paths. Do not mention Prompt Master or this note.${qa}${pastes}\n<original_prompt>\n${clip(masked, ORIGINAL_NOTE_CHARS)}\n</original_prompt>`
 }
 
 // ---------------------------------------------------------------- hooks
@@ -253,6 +316,13 @@ export const register: Register = (on, options) => {
   let cwd = ''
   // One prompt at a time; a second one meanwhile goes through as typed.
   let isBusy = false
+  // The person's own words behind each polished prompt of this chat.
+  const originals = new Map<string, string>()
+  const remember = (polishedText: string, original: string) => {
+    originals.set(polishedText.trim(), original.trim())
+    const oldest = originals.keys().next()
+    if (originals.size > ORIGINALS_KEPT && !oldest.done) originals.delete(oldest.value)
+  }
 
   on('session.start', async ($, e, next) => {
     cwd = e.cwd
@@ -279,7 +349,7 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'prompt-master' }, async ($, e) => {
     const arg = e.args.trim().toLowerCase()
     const now = await read($, isOn)
-    if (arg === 'status') return { text: `Prompt Master is ${now ? 'on' : 'off'}.` }
+    if (arg === 'status') return { text: `Prompt Master is ${now ? 'on' : 'off'}.${await statsLine($)}` }
     const want = arg === 'on' ? true : arg === 'off' ? false : !now
     await setOn($, want, false)
 
@@ -291,19 +361,30 @@ export const register: Register = (on, options) => {
     if (e.command || e.isMeta) return next(e)
     if (!PERSON_ORIGINS.has(e.origin.kind)) return next(e)
 
+    // Sends the prompt on and counts what became of it, once it is in.
+    const send = async (outcome: Outcome, input = e) => {
+      const entered = await next(input)
+      // A prompt the session dropped never went in: not counted.
+      if (entered.drop === undefined) await tally($, outcome)
+
+      return entered
+    }
+
     const lead = e.text.trimStart()
     if (lead.startsWith(SKIP_PREFIX)) {
       const text = lead.slice(SKIP_PREFIX.length).trimStart()
       return text ? next({ ...e, text }) : next(e)
     }
-    if (isMachineFramed(e.text) || isQuickReply(e.text)) return next(e)
+    if (isMachineFramed(e.text)) return next(e)
+    // Quick and short replies need no polishing, and no model call.
+    if (isQuickReply(e.text) || isShortReply(e.text)) return send('quick')
     if (e.turnId) {
       $.ui.toast('Prompt Master skipped this one: Claude was still working, so it went as typed.')
-      return next(e)
+      return send('skipped')
     }
     if (isBusy) {
       $.ui.toast('Prompt Master is still on your last prompt, so this one went as typed.')
-      return next(e)
+      return send('skipped')
     }
 
     isBusy = true
@@ -317,19 +398,24 @@ export const register: Register = (on, options) => {
       const raw = e.text
       const asTyped = (why: string) => {
         $.ui.toast(`Prompt Master ${why}, so your prompt went as typed.`)
-        return next(e)
+        return send('skipped')
       }
       const stopped = () => {
         if (next.signal.aborted) return next(e)
         $.ui.toast('Prompt Master off: your prompt went as typed.')
-        return next(e)
+        return send('skipped')
+      }
+      const alreadyClear = () => {
+        $.ui.toast('Prompt Master: your prompt was already clear, so it went as typed.')
+        return send('clear')
       }
 
-      await setPhase($, 'reading')
-      const chat = await recentChat($)
-      // A click on one of Claude's next-step buttons is an answer: send it.
-      if (chat.buttonLabels.includes(raw.trim())) return next(e)
+      const chat = await recentChat($, originals)
+      // A click on one of Claude's next-step buttons is an answer: send it,
+      // before the band says anything.
+      if (chat.buttonLabels.includes(raw.trim())) return send('quick')
 
+      await setPhase($, 'reading')
       const pastes = maskPastes(raw)
       const attachments = (e.attachments ?? []).map(a => (a.filename ? `${a.type} "${a.filename}"` : a.type))
       const situation: Situation = { raw: pastes.text, conversation: chat.text, cwd, attachments }
@@ -340,10 +426,7 @@ export const register: Register = (on, options) => {
       if (isCutOff(reply)) return asTyped('ran out of room on a long prompt')
 
       const plan = parsePlan(reply, settings.maxQuestions)
-      if (plan?.action === 'pass') {
-        $.ui.toast('Prompt Master: your prompt was already clear, so it went as typed.')
-        return next(e)
-      }
+      if (plan?.action === 'pass') return alreadyClear()
 
       let rewrite: string | undefined
       const answers: Answer[] = []
@@ -382,6 +465,8 @@ export const register: Register = (on, options) => {
       }
 
       if (!rewrite) return asTyped("couldn't finish the rewrite")
+      // The same words back: nothing to review.
+      if (bare(restorePastes(rewrite, pastes.blocks)) === bare(raw)) return alreadyClear()
 
       if (settings.review) {
         await setPhase($, 'review')
@@ -397,12 +482,13 @@ export const register: Register = (on, options) => {
               { options: isLast ? [SEND_IT, SEND_ORIGINAL] : [SEND_IT, ANOTHER_VERSION, SEND_ORIGINAL], header: 'Review' },
             )
           } catch {
-            return asTyped('review was closed')
+            $.ui.toast('Prompt Master review was closed, so your prompt went as typed.')
+            return send('original')
           }
           if (signal.aborted) return stopped()
           if (choice === SEND_IT) break
           // The dialog's own Skip leaves the answer empty: send the original.
-          if (choice === SEND_ORIGINAL || !choice.trim()) return next(e)
+          if (choice === SEND_ORIGINAL || !choice.trim()) return send('original')
 
           const change = choice === ANOTHER_VERSION ? FRESH_VERSION : choice.trim()
           await setPhase($, 'writing')
@@ -424,22 +510,29 @@ export const register: Register = (on, options) => {
       }
 
       const final = restorePastes(rewrite, pastes.blocks)
-      if (final.trim() === raw.trim()) return next(e)
+      if (final.trim() === raw.trim()) return send('clear')
 
       $.ui.toast(
         answers.length > 0
           ? `Prompt Master polished your prompt using your ${answers.length} answer${answers.length > 1 ? 's' : ''}.`
           : 'Prompt Master polished your prompt.',
       )
+      remember(final, raw)
 
-      const entered = await next({ ...e, text: final, context: [...(e.context ?? []), originalNote(raw, answers)] })
-
-      return entered
+      return await send('polished', {
+        ...e,
+        text: final,
+        context: [...(e.context ?? []), originalNote(pastes.text, pastes.blocks.length > 0, answers)],
+      })
     } finally {
       next.signal.removeEventListener('abort', onAbort)
       if (stop === mine) stop = undefined
       isBusy = false
-      await setPhase($, 'idle')
+      try {
+        await setPhase($, 'idle')
+      } catch {
+        // The prompt is already in: a status that won't clear must not replay it.
+      }
     }
   }).catch(($, e, next) => {
     // Never lose the person's prompt: on any failure it goes as typed.

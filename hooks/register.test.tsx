@@ -6,7 +6,7 @@ import { describe, expect, test as kitTest } from 'claude-code/testing'
 import type { TestRest } from 'claude-code/testing'
 import type { ModelCompleteInput, On, PromptSubmitInput, SessionMessage } from 'claude-code'
 
-import { extractPrompt, isMachineFramed, isQuickReply, parsePlan } from './prompts'
+import { extractPrompt, isMachineFramed, isQuickReply, isShortReply, maskPastes, parsePlan, restorePastes } from './prompts'
 
 // Review is on by default when shipped; most tests here look at the flow
 // without it, so they start from review off unless they set it.
@@ -52,10 +52,6 @@ type World = {
   toasts: string[]
   statuses: (string | undefined)[]
   commands: string[]
-  copied: { text: string; surface: string | undefined }[]
-  // What the prompt box holds, and each fill asked of it
-  draft: string
-  fills: { text: string; mode: string | undefined }[]
   store: Map<string, unknown>
   /** Resolves when the helper model is first called. */
   modelReached: Promise<void>
@@ -68,6 +64,8 @@ type Script = {
   answers?: Answer[]
   history?: SessionMessage[]
   stored?: Record<string, unknown>
+  /** The session drops every prompt with this reason. */
+  drop?: string
 }
 
 function worldOf(on: On, script: Script = {}): World {
@@ -83,9 +81,6 @@ function worldOf(on: On, script: Script = {}): World {
     toasts: [],
     statuses: [],
     commands: [],
-    copied: [],
-    draft: '',
-    fills: [],
     store: new Map(Object.entries(script.stored ?? {})),
     modelReached: modelGate.promise,
     askReached: askGate.promise,
@@ -120,26 +115,6 @@ function worldOf(on: On, script: Script = {}): World {
   })
 
   on('session.messages', () => ({ value: script.history ?? [] }))
-
-  let tick = 1_794_000_000_000
-  on('clock.now', () => ({ value: (tick += 1000) }))
-
-  // As documented: only the terminal takes a mod's copy; a remote surface has no path yet.
-  on('ui.copy', ($, e) => {
-    if (e.surface !== 'terminal') return { value: { isCopied: false as const, reason: 'no-surface' as const } }
-    world.copied.push({ text: e.text, surface: e.surface })
-
-    return { value: { isCopied: true as const } }
-  })
-
-  on('prompt.read', () => ({ value: { text: world.draft, cursor: world.draft.length } }))
-
-  on('prompt.fill', ($, e) => {
-    world.fills.push({ text: e.text, mode: e.mode })
-    world.draft = e.mode === 'append' ? world.draft + e.text : e.text
-
-    return { isFilled: true, text: world.draft, cursor: world.draft.length }
-  })
 
   // What the engine itself draws in the band above the prompt.
   on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
@@ -190,6 +165,8 @@ function worldOf(on: On, script: Script = {}): World {
   // The bottom: the prompt enters the session as it arrived here.
   on('prompt.submit', ($, e) => {
     world.submitted.push(e)
+
+    if (script.drop !== undefined) return { drop: script.drop }
 
     return { text: e.text, ...(e.context !== undefined ? { context: e.context } : {}) }
   })
@@ -417,22 +394,24 @@ describe('polishing a prompt', () => {
         role: 'assistant',
         text: 'Done: found 3 issues.',
         toolUses: [
-          { tool_use_id: 't1', tool: 'mcp__ccd_turn__wrap_up', input: { ask: 'Which fix first?', actions: [{ label: 'Yes, fix 1' }, { label: 'Not now' }] } },
+          { tool_use_id: 't1', tool: 'mcp__ccd_turn__wrap_up', input: { ask: 'Which fix first?', actions: [{ label: 'Fix all three now' }, { label: 'Not now' }] } },
         ],
       },
     ]
     const world = worldOf(on, { replies: [plan({ action: 'pass', reason: 'reply' })], history })
     await $.session.start(SESSION)
 
-    await $.prompt.submit(typed('Yes, fix 1'))
+    await $.prompt.submit(typed('Fix all three now'))
     expect(world.calls, 'a button click needs no model call').toHaveLength(0)
-    expect(world.submitted[0]?.text).toBe('Yes, fix 1')
+    expect(world.submitted[0]?.text).toBe('Fix all three now')
+    expect(world.statuses.filter(Boolean), 'the band stays quiet for a click').toEqual([])
+    expect(world.store.get('stats')).toEqual({ quick: 1 })
 
     await $.prompt.submit(typed('fix the second issue but keep the old file'))
     const sent = world.calls[0]?.prompt ?? ''
     expect(sent).toContain('Claude: Done: found 3 issues.')
     expect(sent).not.toContain('Working on it.')
-    expect(sent).toContain('Claude asked: Which fix first? [buttons: Yes, fix 1 / Not now]')
+    expect(sent).toContain('Claude asked: Which fix first? [buttons: Fix all three now / Not now]')
   })
 
   test('long pastes are hidden from the helper and put back whole, $ signs intact', async ($, on) => {
@@ -925,7 +904,7 @@ describe('settings', () => {
     const result = await $.prompt.submit(typed(ROUGH))
 
     expect(world.asked[0]?.options).toEqual(['Send it', 'Try another version', 'Send my original'])
-    expect(world.calls[1]?.prompt).toContain('<change_request>\nWrite a noticeably different version')
+    expect(world.calls[1]?.prompt).toContain('<change_request>\nWrite another version: keep every fact')
     expect(world.asked[1]?.question).toContain('v2')
     expect(world.asked[2]?.options, 'the last round would send a new version unseen').toEqual(['Send it', 'Send my original'])
     expect(result.text).toBe('v3')
@@ -1031,6 +1010,308 @@ describe('(j) reading the model\'s replies', () => {
     expect(isMachineFramed('Do the brief. The user is not present to answer questions.')).toBe(true)
     expect(isMachineFramed('What does <scheduled-task> mean in my transcript?')).toBe(false)
     expect(isMachineFramed(ROUGH)).toBe(false)
+  })
+})
+
+// ------------------------------------------------------------------ quick paths, context and counts
+
+describe('short replies, context and counts', () => {
+  test('short replies that keep a chat going go as typed with no model call and no notice', async ($, on) => {
+    const world = worldOf(on)
+    await $.session.start(SESSION)
+
+    const replies = ['Yes, publish both', 'No, after the reset', 'Still broken', 'it moves now :)', 'What is the difference between A and B?', 'continue with the two tweaks']
+    for (const text of replies) await $.prompt.submit(typed(text))
+
+    expect(world.calls).toEqual([])
+    expect(world.submitted.map(s => s.text)).toEqual(replies)
+    expect(world.toasts).toEqual([])
+  })
+
+  test('a terse instruction, a request to act, or a "yes" that carries new asks still reaches the helper', async ($, on) => {
+    const asks = ['fix login bug', 'Can you make it blue?', 'Yes but also change the header to blue and tell me why it broke']
+    const world = worldOf(on, { replies: asks.map(() => plan({ action: 'pass', reason: 'clear' })) })
+    await $.session.start(SESSION)
+
+    for (const text of asks) await $.prompt.submit(typed(text))
+
+    expect(world.calls).toHaveLength(asks.length)
+  })
+
+  test('the helper call is kept quick: low effort, bounded by a timeout', async ($, on) => {
+    const world = worldOf(on, { replies: [plan({ action: 'pass', reason: 'clear' })] })
+    await $.session.start(SESSION)
+
+    await $.prompt.submit(typed(ROUGH))
+
+    expect(world.calls[0]?.effort).toBe('low')
+    expect(world.calls[0]?.timeoutMs).toBe(45_000)
+  })
+
+  test('a rewrite that only adds "please", capitals or punctuation goes as typed, with no review', { options: { review: true } }, async ($, on) => {
+    const world = worldOf(on, {
+      replies: [plan({ action: 'rewrite', reason: 'tidy' }, 'Please update the MRP note with what we decided about the hardware sheet.')],
+    })
+    await $.session.start(SESSION)
+
+    await $.prompt.submit(typed(ROUGH))
+
+    expect(world.asked, 'nothing new to review').toEqual([])
+    expect(world.submitted[0]?.text).toBe(ROUGH)
+    expect(world.submitted[0]?.context).toBeUndefined()
+    expect(world.toasts).toEqual(['Prompt Master: your prompt was already clear, so it went as typed.'])
+  })
+
+  test("the next prompt shows the helper the person's own words, not its earlier rewrite", async ($, on) => {
+    const history: SessionMessage[] = []
+    const world = worldOf(on, {
+      replies: [plan({ action: 'rewrite', reason: 'r' }, REWRITE), plan({ action: 'pass', reason: 'clear' })],
+      history,
+    })
+    await $.session.start(SESSION)
+
+    await $.prompt.submit(typed(ROUGH))
+    // The session stores the polished text as the person's message.
+    history.push({ role: 'user', text: REWRITE, toolUses: [] }, { role: 'assistant', text: 'Updated the note.', toolUses: [] })
+
+    await $.prompt.submit(typed('now do the same for the inventory note and list what changed'))
+
+    const sent = world.calls[1]?.prompt ?? ''
+    expect(sent).toContain(`Person: ${ROUGH}\nClaude: Updated the note.`)
+    expect(sent).not.toContain(REWRITE)
+  })
+
+  test('the note beside a polished prompt names a paste by its marker, and says whose wording an extra is', async ($, on) => {
+    const log = Array.from({ length: 12 }, (_, i) => `line ${i} cost $${i}.00 ERROR`).join('\n')
+    const world = worldOf(on, {
+      replies: [plan({ action: 'rewrite', reason: 'r' }, 'Why does the import below fail?\n\n[[PASTE 1]]')],
+    })
+    await $.session.start(SESSION)
+
+    await $.prompt.submit(typed(`why does this fail\n\n${log}`))
+
+    expect(world.submitted[0]?.text, 'a shortened marker is still restored').toBe(`Why does the import below fail?\n\n${log}`)
+    const note = world.submitted[0]?.context?.[0] ?? ''
+    expect(note).toContain('<original_prompt>\nwhy does this fail\n\n[[PASTE 1: line 0 cost $0.00 ERROR]]\n</original_prompt>')
+    expect(note, 'the paste is not sent twice').not.toContain('line 11 cost')
+    expect(note).toContain("the tool's wording, not the person's decision")
+  })
+
+  test('/prompt-master status counts what happened to each prompt, numbers only', { options: { review: true } }, async ($, on) => {
+    const world = worldOf(on, {
+      replies: [
+        plan({ action: 'rewrite', reason: 'r' }, REWRITE),
+        plan({ action: 'pass', reason: 'clear' }),
+        plan({ action: 'rewrite', reason: 'r' }, REWRITE),
+      ],
+      answers: ['Send it', 'Send my original'],
+    })
+    await $.session.start(SESSION)
+
+    await $.prompt.submit(typed(ROUGH))
+    await $.prompt.submit(typed('summarise the routing changes for line 3'))
+    await $.prompt.submit(typed(ROUGH))
+    await $.prompt.submit(typed('Yes, go on'))
+
+    expect(await $.command.run(command('status'))).toEqual({
+      text: 'Prompt Master is on. So far: 1 polished, 1 sent as your original after review, 1 already clear, 1 quick replies, 0 skipped.',
+    })
+    expect(world.store.get('stats')).toEqual({ polished: 1, clear: 1, original: 1, quick: 1 })
+  })
+
+  test('turning it off while a prompt is being polished sends that prompt as typed', async ($, on) => {
+    const hold = gate()
+    const world = worldOf(on, { replies: [{ after: hold.promise, text: plan({ action: 'rewrite', reason: 'r' }, REWRITE) }] })
+    await $.session.start(SESSION)
+
+    const sent = $.prompt.submit(typed(ROUGH))
+    await world.modelReached
+    await $.command.run(command('off'))
+    hold.open()
+
+    expect((await sent).text).toBe(ROUGH)
+    expect(world.toasts).toContain('Prompt Master off: your prompt went as typed.')
+
+    await $.prompt.submit(typed('summarise the routing changes for line 3'))
+    expect(world.calls, 'off: no model call for the next prompt').toHaveLength(1)
+  })
+
+  test('review: a change that cannot be applied shows the last version again', { options: { review: true } }, async ($, on) => {
+    const world = worldOf(on, {
+      replies: [plan({ action: 'rewrite', reason: 'r' }, REWRITE), { empty: true }],
+      answers: ['Try another version', 'Send it'],
+    })
+    await $.session.start(SESSION)
+
+    await $.prompt.submit(typed(ROUGH))
+
+    expect(world.asked).toHaveLength(2)
+    expect(world.asked[1]?.question).toContain(REWRITE)
+    expect(world.toasts).toContain("Prompt Master couldn't apply that change; showing the last version.")
+    expect(world.submitted[0]?.text).toBe(REWRITE)
+  })
+
+  test('only the last four turns ride along, long replies clipped', async ($, on) => {
+    const history: SessionMessage[] = []
+    for (let i = 1; i <= 6; i += 1) {
+      const reply = i === 4 ? `START ${'x'.repeat(3000)} END` : i === 6 ? `${'y'.repeat(2500)} NEWEST END` : `answer ${i}`
+      history.push({ role: 'user', text: `question ${i}`, toolUses: [] }, { role: 'assistant', text: reply, toolUses: [] })
+    }
+    const world = worldOf(on, { replies: [plan({ action: 'pass', reason: 'clear' })], history })
+    await $.session.start(SESSION)
+
+    await $.prompt.submit(typed(ROUGH))
+
+    const sent = world.calls[0]?.prompt ?? ''
+    expect(sent).not.toContain('question 2')
+    expect(sent).toContain('Person: question 3')
+    expect(sent, 'an older long reply keeps its head and its tail').toContain('Claude: START xxx')
+    expect(sent).toContain('x … x')
+    expect(sent).toContain('xxx END')
+    expect(sent, 'the newest reply keeps its end').toContain('NEWEST END')
+    expect(sent).not.toContain('y'.repeat(2100))
+  })
+
+  test('a question Claude asked in its own dialog rides along', async ($, on) => {
+    const history: SessionMessage[] = [
+      { role: 'user', text: 'update the price list', toolUses: [] },
+      {
+        role: 'assistant',
+        text: 'There are two sheets.',
+        toolUses: [{ tool_use_id: 't1', tool: 'AskUserQuestion', input: { questions: [{ question: 'Which sheet should I update?' }] } }],
+      },
+    ]
+    const world = worldOf(on, { replies: [plan({ action: 'pass', reason: 'answer' })], history })
+    await $.session.start(SESSION)
+
+    await $.prompt.submit(typed('the main one, but keep a backup copy of the old file first'))
+
+    expect(world.calls[0]?.prompt).toContain('Claude asked: Which sheet should I update?')
+  })
+})
+
+describe('pasted material and short replies, on their own', () => {
+  test('restorePastes finds a marker by its number: whole, shortened, unclosed or repeated', () => {
+    const blocks = [
+      { marker: '[[PASTE 1: alpha]]', text: 'ALPHA $1 $& [[PASTE 2]]' },
+      { marker: '[[PASTE 2: beta]]', text: 'BETA' },
+    ]
+    expect(restorePastes('a\n[[PASTE 1: alpha]]\nb\n[[PASTE 2: beta]]', blocks)).toBe('a\nALPHA $1 $& [[PASTE 2]]\nb\nBETA')
+    expect(restorePastes('a [[PASTE 1]] b [[PASTE 2]]', blocks), 'shortened').toBe('a ALPHA $1 $& [[PASTE 2]] b BETA')
+    expect(restorePastes('[[PASTE 2: be\nthen [[PASTE 1: alpha]]', blocks), 'unclosed').toBe('BETA\nthen ALPHA $1 $& [[PASTE 2]]')
+    expect(restorePastes('[[PASTE 1]] and again [[PASTE 1]]', blocks), 'a repeat goes in once; a dropped one is appended').toBe(
+      'ALPHA $1 $& [[PASTE 2]] and again \n\nBETA',
+    )
+    expect(restorePastes('see [[PASTE 7]]', blocks), 'not one of ours').toBe('see [[PASTE 7]]\n\nALPHA $1 $& [[PASTE 2]]\n\nBETA')
+  })
+
+  test('eleven pastes survive the round trip, marker 1 and marker 10 kept apart', () => {
+    const parts = Array.from({ length: 11 }, (_, i) => Array.from({ length: 9 }, (_, j) => `block ${i + 1} line ${j}`).join('\n'))
+    const raw = parts.join('\n\n')
+    const masked = maskPastes(raw)
+
+    expect(masked.blocks).toHaveLength(11)
+    expect(restorePastes(masked.text, masked.blocks)).toBe(raw)
+  })
+
+  test('a long paragraph of prose is the request, not a paste; dense data is a paste', () => {
+    const prose = `${'I was thinking about the report layout and want to change a few things; '.repeat(9)}the meeting is at 10:30 on 2026-11-20.`
+    expect(maskPastes(prose).blocks).toEqual([])
+
+    const json = '{"a":1,"b":[1,2,3],"c":{"d":"e"}}'.repeat(25)
+    expect(maskPastes(json).blocks).toHaveLength(1)
+  })
+
+  test('isShortReply', () => {
+    for (const yes of [
+      'Yes, publish both',
+      'No, after the reset',
+      'ok do that',
+      'Still broken',
+      'it moves now :)',
+      'I just logged in',
+      'So no backup?',
+      'What is the difference between A and B?',
+      'continue with the two tweaks',
+    ]) {
+      expect(isShortReply(yes), yes).toBe(true)
+    }
+    for (const no of [
+      'fix login bug',
+      'add tests',
+      'Can you make it blue?',
+      'please clean up the old files',
+      'Yes but also change the header to blue and tell me why it broke',
+      'the main one, but keep a backup copy of the old file first',
+      'Yes. Please go ahead.\n\nAlso, the totals row looks off.',
+      'https://example.com/task/1',
+      '/review',
+      '@sam should check this',
+    ]) {
+      expect(isShortReply(no), no).toBe(false)
+    }
+  })
+})
+
+describe('counts and the review fixes', () => {
+  test('prompts that go as typed are counted: skipped when Claude is busy or the helper fails, original when the review is closed', { options: { review: true } }, async ($, on) => {
+    const world = worldOf(on, { replies: [{ empty: true }, plan({ action: 'rewrite', reason: 'r' }, REWRITE)], answers: [{ dismiss: true }] })
+    await $.session.start(SESSION)
+
+    await $.prompt.submit({ ...typed(ROUGH), turnId: 'turn-1' })
+    await $.prompt.submit(typed(ROUGH))
+    await $.prompt.submit(typed(ROUGH))
+
+    expect(world.submitted.map(s => s.text)).toEqual([ROUGH, ROUGH, ROUGH])
+    expect(world.store.get('stats')).toEqual({ skipped: 2, original: 1 })
+  })
+
+  test('a prompt the session drops is not counted', async ($, on) => {
+    const world = worldOf(on, { drop: 'stopped' })
+    await $.session.start(SESSION)
+
+    await $.prompt.submit(typed('Yes, publish both'))
+
+    expect(world.store.get('stats')).toBeUndefined()
+  })
+
+  test('the revise request treats a typed change as the person\'s own words, and keeps their answers', { options: { review: true } }, async ($, on) => {
+    const world = worldOf(on, {
+      replies: [plan({ action: 'rewrite', reason: 'r' }, REWRITE), written(`${REWRITE} It is due Friday.`)],
+      answers: ['add that it is due friday', 'Send it'],
+    })
+    await $.session.start(SESSION)
+
+    await $.prompt.submit(typed(ROUGH))
+
+    expect(world.calls[1]?.system).toContain("because the request is the person's own words")
+    expect(world.calls[1]?.system).toContain('their answers to your questions')
+    expect(world.calls[1]?.prompt).toContain('<change_request>\nadd that it is due friday\n</change_request>')
+    expect(world.submitted[0]?.text).toBe(`${REWRITE} It is due Friday.`)
+  })
+
+  test('the helper is told to mention an attachment only where the person did', async ($, on) => {
+    const world = worldOf(on, { replies: [plan({ action: 'pass', reason: 'r' })] })
+    await $.session.start(SESSION)
+
+    await $.prompt.submit({ ...typed('the export page is broken again since the update'), attachments: [{ type: 'image' }] })
+
+    expect(world.calls[0]?.prompt).toContain("Mention an attachment only where the person's own words do")
+  })
+
+  test('a few lines of prose with part numbers or times are the request, not a paste', () => {
+    const prose = [
+      'Check 14-2200 against the drawing and the latest revision we got from the supplier last week, the one with the new hole pattern and the thicker flange that everyone agreed on',
+      'Also compare 12-3456 with 12-3457 and tell me which one the assembly really uses, since the parts list and the shop notes disagree and I need to sort it out before 10:30',
+      'and keep the old numbers in the notes until we are sure, because the floor still uses them and changing them now would confuse everyone on the second shift tonight',
+      'When you are done, tell me what you found for each pair and which document you think is right.',
+    ].join('\n')
+    expect(prose.length).toBeGreaterThanOrEqual(600)
+    expect(maskPastes(prose).blocks).toEqual([])
+
+    const log = ['2026-11-16 10:30:22 ERROR worker 3 failed: timeout after 30000 ms while waiting for the queue to drain, retrying with backoff and a fresh connection to the broker', '2026-11-16 10:30:52 ERROR worker 3 failed again: timeout after 30000 ms while waiting for the queue to drain, giving up and marking the job as failed for review', '2026-11-16 10:31:05 WARN  scheduler: 14 jobs waiting, 2 workers idle, 1 worker failed; the next run starts in five minutes unless someone clears the queue by hand first', '2026-11-16 10:31:40 INFO  scheduler: queue cleared by hand, 14 jobs requeued, workers restarted, backlog draining normally again'].join('\n')
+    expect(log.length).toBeGreaterThanOrEqual(600)
+    expect(maskPastes(log).blocks, 'timestamped log lines are still a paste').toHaveLength(1)
   })
 })
 
