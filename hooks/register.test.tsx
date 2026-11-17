@@ -66,6 +66,8 @@ type Script = {
   stored?: Record<string, unknown>
   /** The session drops every prompt with this reason. */
   drop?: string
+  /** The band beneath the mod is the engine's own node, as on 2.1.32x, not a drawing. */
+  engineBand?: boolean
 }
 
 function worldOf(on: On, script: Script = {}): World {
@@ -117,7 +119,8 @@ function worldOf(on: On, script: Script = {}): World {
   on('session.messages', () => ({ value: script.history ?? [] }))
 
   // What the engine itself draws in the band above the prompt.
-  on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
+  on('ui.render', { component: 'AbovePrompt' }, ($, e, next) => {
+    if (script.engineBand) return next(e)
     const { Text } = $.ui.resolve(e)
 
     return <Text>engine band</Text>
@@ -673,8 +676,8 @@ describe('turning it on and off', () => {
       const before = await ui.find({ key: 'prompt-master-toggle' })
       expect(before?.type, surface).toBe('Button')
       expect(before?.text, surface).toBe('✨')
-      // What is beneath stays drawn. (This runner has no `keepsBeneath` yet, so look for it.)
-      expect(await ui.find({ type: 'Text', text: 'engine band' }), `${surface}: the engine's band is kept`).toBeDefined()
+      // The band's other rows stay drawn (the test's hook draws one of its own).
+      expect(await ui.find({ type: 'Text', text: 'engine band' }), `${surface}: the band's other row is kept`).toBeDefined()
 
       await ui.press({ key: 'prompt-master-toggle' })
       expect(world.store.get('isOn'), surface).toBe(false)
@@ -754,6 +757,18 @@ describe('turning it on and off', () => {
     }
   })
 
+  test('(i) the engine\'s own node gets no place (no empty gap after the star)', async ($, on) => {
+    worldOf(on, { engineBand: true })
+    await $.session.start(SESSION)
+
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount({ ...BAND, surface })
+      expect(await ui.find({ key: 'prompt-master-toggle' }), surface).toBeDefined()
+      expect(await ui.find({ key: 'prompt-master-rest' }), `${surface}: no slot for a node that draws nothing`).toBeUndefined()
+      await ui.unmount()
+    }
+  })
+
   test('(i) with one row per mod, the star joins the next row instead of a line of its own', async ($, on) => {
     worldOf(on)
     // The engine stacks whatever rows reach it.
@@ -788,7 +803,7 @@ describe('turning it on and off', () => {
       expect(drawn, surface).toContain('prompt-master-rest')
       expect(drawn, surface).toContain('usage bars')
       expect(drawn, surface).toContain('own star row')
-      expect(drawn, `${surface}: side by side`).toContain('"flexDirection":"row"')
+      expect(drawn, `${surface}: side by side, one cell apart`).toContain('"flexDirection":"row","gap":1')
     }
   })
 

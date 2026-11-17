@@ -4,7 +4,7 @@
 // it on or off.
 
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface as Engine, PluginOptions, Register, SessionMessage } from 'claude-code'
+import type { EngineInterface as Engine, PluginOptions, Register, RenderElement, SessionMessage } from 'claude-code'
 
 import type { Phase } from '../types'
 import {
@@ -161,6 +161,16 @@ async function toggle($: Engine) {
 
 // The name the engine gives this mod's band row, learned when it is drawn.
 let ownRow = 'prompt-master'
+
+// Cells between the star and the row beside it (usage-bars-chat's bars).
+const BESIDE = 1
+
+// Whether what next(e) answered in the band is a drawing: another mod's, on an
+// older engine that passed it down this chain. The engine's own node draws
+// nothing there outside a survey; given a place, it is only an empty gap.
+function isDrawing(below: RenderElement | undefined): below is RenderElement {
+  return below !== undefined && below !== null && below.type !== 'engine'
+}
 
 type BandDrawing = Parameters<Engine['ui']['resolve']>[0]
 
@@ -553,8 +563,8 @@ export const register: Register = (on, options) => {
 
     // An older engine handed other mods' drawing down this chain: keep it on
     // the same row, after the star.
-    return below ? (
-      <Box flexDirection="row" gap={2}>
+    return isDrawing(below) ? (
+      <Box flexDirection="row" gap={BESIDE}>
         {row}
         <Box key="prompt-master-rest" flexGrow={1}>
           {below}
@@ -579,7 +589,7 @@ export const register: Register = (on, options) => {
 
     return {
       type: 'Box',
-      props: { flexDirection: 'row', gap: 2 },
+      props: { flexDirection: 'row', gap: BESIDE },
       children: [
         { type: 'Box', props: { key: 'prompt-master-star', flexShrink: 0 }, children: [star] },
         { type: 'Box', props: { key: 'prompt-master-rest', flexGrow: 1 }, children: [others] },
