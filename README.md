@@ -65,10 +65,10 @@ Your prompt goes to Claude exactly as you typed it.
 
 ## Settings
 
-In the plugin's settings:
+In the plugin's settings (desktop app: Settings → Customize → Prompt master → Settings):
 
-- **Prompt Master model**: `sonnet` (default), `opus` or `haiku`.
-- **Most questions per prompt**: 0 to 4 (default 3; 0 = never ask, just rewrite).
+- **Prompt Master model**: the model that reads your prompt and writes the suggested one: `opus` (default), `sonnet` or `haiku`.
+- **Most questions per prompt**: pick 1, 2, 3 or 4 (default 3). Updating from 0.2.1 or earlier sets this back to 3, so pick your number again.
 - **Review before sending** (default on): show the polished prompt first, then choose Send it, Try another version (a fresh rewrite), Send my original, or type what to change. The dialog's own Skip button also sends your original.
 
-Each prompt that reaches the helper costs one quick model call, two when it asks you a question, plus one for each new version or change you ask for in review (at most two). Quick and short replies cost none.
+Each prompt that reaches the helper costs one quick model call, two when it asks you a question, plus one for each new version or change you ask for in review (at most three). Quick and short replies cost none.

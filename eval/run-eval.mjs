@@ -4,7 +4,7 @@
 //
 //   node eval/run-eval.mjs [--prompts hooks/prompts.ts] [--cases eval/cases.json]
 //                          [--out eval/out/<label>.json] [--label name]
-//                          [--model sonnet] [--effort low|medium|high]
+//                          [--model opus] [--effort low|medium|high]
 //                          [--concurrency 4] [--follow-asks] [--only id1,id2]
 //
 // With no flags it runs the mod's own prompts.ts on the made-up cases beside
@@ -27,7 +27,8 @@ const has = name => process.argv.includes(`--${name}`)
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'))
 const promptsPath = path.resolve(arg('prompts') ?? path.join(here, '..', 'hooks', 'prompts.ts'))
 const cases = JSON.parse(fs.readFileSync(arg('cases') ?? path.join(here, 'cases.json'), 'utf8'))
-const model = arg('model') ?? 'sonnet'
+// The mod's own default (plugin.json); pass --model sonnet to compare with runs before 0.2.2.
+const model = arg('model') ?? 'opus'
 const effort = arg('effort')
 const concurrency = Number(arg('concurrency') ?? 4)
 const only = arg('only')?.split(',')

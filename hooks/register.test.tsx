@@ -231,7 +231,7 @@ describe('polishing a prompt', () => {
     const result = await $.prompt.submit(typed(ROUGH))
 
     expect(world.calls, 'one call reads the prompt, one rewrites it').toHaveLength(2)
-    expect(world.calls[0]?.model).toBe('sonnet')
+    expect(world.calls[0]?.model).toBe('opus')
     expect(world.calls[0]?.prompt).toContain(`<rough_prompt>\n${ROUGH}\n</rough_prompt>`)
     expect(world.calls[0]?.prompt).toContain('<working_folder>C:/Vault</working_folder>')
     expect(world.calls[0]?.system).toContain('"ask"')
@@ -849,18 +849,45 @@ describe('settings', () => {
     expect(world.calls[0]?.model).toBe('haiku')
   })
 
-  test('maxQuestions 0 never asks, and the analysis is not offered "ask"', { options: { maxQuestions: 0 } }, async ($, on) => {
-    const world = worldOf(on, { replies: [askPlan(WORKBOOK_Q), written(REWRITE)] })
+  // The questions setting is a picker over "1" to "4": a value outside it,
+  // such as text typed into the old box, counts as unset, so 3.
+  for (const outside of ['wqdqwdqw', '0', '5']) {
+    test(`maxQuestions "${outside}" is not a choice: up to 3 questions`, { options: { maxQuestions: outside } }, async ($, on) => {
+      const world = worldOf(on, { replies: [plan({ action: 'pass', reason: 'ok' })] })
+      await $.session.start(SESSION)
+
+      await $.prompt.submit(typed(ROUGH))
+
+      expect(world.calls[0]?.system).toContain('"ask"')
+      expect(world.calls[0]?.system).toContain('3 at most')
+    })
+  }
+
+  // 0.2.1 and earlier saved the count as a number (0 was "never ask"). The
+  // engine drops a saved number for a picker, so after the update it reads as 3.
+  for (const saved of [0, 2, 4]) {
+    test(`a count of ${saved} saved by 0.2.1 or earlier reads as unset: up to 3 questions`, { options: { maxQuestions: saved } }, async ($, on) => {
+      const world = worldOf(on, { replies: [plan({ action: 'pass', reason: 'ok' })] })
+      await $.session.start(SESSION)
+
+      await $.prompt.submit(typed(ROUGH))
+
+      expect(world.calls[0]?.system).toContain('3 at most')
+    })
+  }
+
+  test('maxQuestions "4" asks up to four questions', { options: { maxQuestions: '4' } }, async ($, on) => {
+    const five = [1, 2, 3, 4, 5].map(i => ({ question: `Question ${i}?`, header: `Q${i}`, options: ['A', 'B'] }))
+    const world = worldOf(on, { replies: [askPlan(...five), written(REWRITE)], answers: ['A', 'A', 'A', 'A'] })
     await $.session.start(SESSION)
 
     await $.prompt.submit(typed(ROUGH))
 
-    expect(world.calls[0]?.system).not.toContain('"ask"')
-    expect(world.asked).toEqual([])
-    expect(world.submitted[0]?.text).toBe(REWRITE)
+    expect(world.calls[0]?.system).toContain('4 at most')
+    expect(world.asked, 'four of the five questions are asked').toHaveLength(4)
   })
 
-  test('maxQuestions 1 asks one question only, unnumbered', { options: { maxQuestions: 1 } }, async ($, on) => {
+  test('maxQuestions 1 asks one question only, unnumbered', { options: { maxQuestions: '1' } }, async ($, on) => {
     const world = worldOf(on, {
       replies: [askPlan(WORKBOOK_Q, { question: 'Who is it for?', header: 'Audience', options: ['Me', 'Team'] }), written(REWRITE)],
       answers: ['Hardware'],
@@ -1342,5 +1369,16 @@ describe('shipped defaults', () => {
     expect(world.asked[0]?.question).toContain(REWRITE)
     expect(world.asked[0]?.options).toEqual(['Send it', 'Try another version', 'Send my original'])
     expect(world.submitted[0]?.text, 'Claude (and the phone) get the polished prompt').toBe(REWRITE)
+  })
+
+  kitTest('Opus reads the prompt and writes the suggested one, asking up to 3 questions, by default', async ($, on) => {
+    const world = worldOf(on, { replies: [askPlan(WORKBOOK_Q), written(REWRITE)], answers: ['Hardware', 'Send it'] })
+    await $.session.start(SESSION)
+
+    await $.prompt.submit(typed(ROUGH))
+
+    expect(world.calls.map(c => c.model), 'the reading call and the writing call').toEqual(['opus', 'opus'])
+    expect(world.calls[0]?.system).toContain('3 at most')
+    expect(world.submitted[0]?.text).toBe(REWRITE)
   })
 })

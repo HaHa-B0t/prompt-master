@@ -70,10 +70,18 @@ const ORIGINAL_NOTE_CHARS = 20_000
 
 type Settings = { model: string; maxQuestions: number; review: boolean }
 
+// The manifest's defaults, for when a value is missing.
+const DEFAULT_MODEL = 'opus'
+const DEFAULT_QUESTIONS = 3
+// What the questions picker offers. The engine hands a choice over as its
+// string; anything outside the picker arrives unset and reads as 3, a number
+// saved by 0.2.1 or earlier included (the engine drops it before this runs).
+const QUESTION_CHOICES: readonly string[] = ['1', '2', '3', '4']
+
 function settingsFrom(options: PluginOptions): Settings {
-  const model = typeof options.model === 'string' && options.model.trim() ? options.model.trim() : 'sonnet'
-  const n = Number(options.maxQuestions)
-  const maxQuestions = Number.isFinite(n) ? Math.max(0, Math.min(4, Math.round(n))) : 3
+  const model = typeof options.model === 'string' && options.model.trim() ? options.model.trim() : DEFAULT_MODEL
+  const raw = options.maxQuestions
+  const maxQuestions = typeof raw === 'string' && QUESTION_CHOICES.includes(raw) ? Number(raw) : DEFAULT_QUESTIONS
 
   // On unless switched off, as the manifest's default says.
   return { model, maxQuestions, review: options.review !== false }

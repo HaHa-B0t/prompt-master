@@ -1,14 +1,14 @@
 {
   "name": "prompt-master",
-  "version": "0.2.1",
-  "description": "Polishes your rough prompt before Claude reads it: asks what's missing, then rewrites it clearly, adding nothing you didn't say. One-click on/off button above the prompt box.",
+  "version": "0.2.2",
+  "description": "Polishes your rough prompt before Claude reads it: asks what's missing, then rewrites it clearly, adding nothing you didn't say. One-click on/off button above the prompt box. To choose which model writes the suggested prompt (Opus by default), go to this plugin's Settings.",
   "types": "./types/index.d.ts",
   "userConfig": {
     "model": {
       "type": "string",
       "title": "Prompt Master model",
-      "description": "Which Claude model reads and rewrites your prompts",
-      "default": "sonnet",
+      "description": "Which Claude model reads your prompt and writes the suggested one",
+      "default": "opus",
       "options": [
         "sonnet",
         "opus",
@@ -16,10 +16,16 @@
       ]
     },
     "maxQuestions": {
-      "type": "number",
+      "type": "string",
       "title": "Most questions per prompt",
-      "description": "0 never asks and just rewrites; 4 at most",
-      "default": 3
+      "description": "How many questions it may ask before it writes the suggested prompt",
+      "default": "3",
+      "options": [
+        "1",
+        "2",
+        "3",
+        "4"
+      ]
     },
     "review": {
       "type": "boolean",
